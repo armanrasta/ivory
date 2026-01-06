@@ -1,0 +1,11 @@
+# crates/ivory-state/Cargo.toml
+[package]
+name = "ivory-state"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ivory-primitives = { workspace = true }
+ivory-crypto = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }

@@ -1,0 +1,13 @@
+# crates/ivory-txpool/Cargo.toml
+[package]
+name = "ivory-txpool"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ivory-primitives = { workspace = true }
+ivory-core = { workspace = true }
+parking_lot = { workspace = true }
+dashmap = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

@@ -1,0 +1,12 @@
+# crates/ivory-consensus/Cargo.toml
+[package]
+name = "ivory-consensus"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ivory-primitives = { workspace = true }
+ivory-core = { workspace = true }
+ivory-crypto = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }

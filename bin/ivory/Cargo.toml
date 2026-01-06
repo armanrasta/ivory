@@ -1,0 +1,50 @@
+[package]
+name = "ivory"
+description = "Ivory Chain node binary"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "ivory"
+path = "src/main.rs"
+
+[dependencies]
+# Internal
+ivory-primitives = { workspace = true }
+ivory-crypto = { workspace = true }
+ivory-core = { workspace = true }
+ivory-chain = { workspace = true }
+ivory-consensus = { workspace = true }
+ivory-network = { workspace = true }
+ivory-txpool = { workspace = true }
+ivory-storage = { workspace = true }
+ivory-rpc = { workspace = true }
+ivory-state = { workspace = true }
+ivory-executor = { workspace = true }
+
+# Runtime
+tokio = { workspace = true }
+futures = { workspace = true }
+
+# CLI
+clap = { workspace = true }
+
+# Config
+config = { workspace = true }
+toml = { workspace = true }
+dirs = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Utils
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }

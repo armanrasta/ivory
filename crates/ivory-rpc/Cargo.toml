@@ -1,0 +1,56 @@
+# crates/ivory-rpc/Cargo.toml
+
+[package]
+name = "ivory-rpc"
+description = "JSON-RPC and WebSocket API for Ivory Chain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[features]
+default = ["json-rpc", "websocket"]
+json-rpc = []
+websocket = []
+# gRPC feature - when enabled, includes tonic and prost
+grpc = ["dep:tonic", "dep:prost"]
+
+[dependencies]
+# Internal
+ivory-primitives = { workspace = true }
+ivory-crypto = { workspace = true }
+ivory-core = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# HTTP
+axum = { workspace = true }
+axum-extra = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+hyper = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Optional gRPC - note the "dep:" prefix for optional workspace deps
+tonic = { workspace = true, optional = true }
+prost = { workspace = true, optional = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Utils
+hex = { workspace = true }
+parking_lot = { workspace = true }
+dashmap = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"

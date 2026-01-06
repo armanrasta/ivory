@@ -1,0 +1,11 @@
+# crates/ivory-executor/Cargo.toml
+[package]
+name = "ivory-executor"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ivory-primitives = { workspace = true }
+ivory-core = { workspace = true }
+ivory-state = { workspace = true }
+thiserror = { workspace = true }

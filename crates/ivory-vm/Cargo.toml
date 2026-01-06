@@ -1,0 +1,9 @@
+# crates/ivory-vm/Cargo.toml
+[package]
+name = "ivory-vm"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ivory-primitives = { workspace = true }
+thiserror = { workspace = true }

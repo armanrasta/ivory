@@ -1,0 +1,12 @@
+# crates/ivory-core/Cargo.toml
+[package]
+name = "ivory-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ivory-primitives = { workspace = true }
+ivory-crypto = { workspace = true }
+serde = { workspace = true }
+bincode = { workspace = true }
+thiserror = { workspace = true }

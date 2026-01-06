@@ -1,0 +1,16 @@
+[package]
+name = "ivory-primitives"
+description = "Core primitive types for Ivory Chain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+bincode = { workspace = true }

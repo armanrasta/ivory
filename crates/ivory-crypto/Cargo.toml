@@ -1,0 +1,12 @@
+# crates/ivory-crypto/Cargo.toml
+[package]
+name = "ivory-crypto"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ivory-primitives = { workspace = true }
+blake3 = { workspace = true }
+ed25519-dalek = { workspace = true }
+rand = { workspace = true }
+thiserror = { workspace = true }

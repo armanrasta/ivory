@@ -1,0 +1,11 @@
+# tools/ivory-keygen/Cargo.toml
+[package]
+name = "ivory-keygen"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ivory-crypto = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+hex = { workspace = true }

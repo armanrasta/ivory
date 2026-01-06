@@ -1,0 +1,12 @@
+# crates/ivory-storage/Cargo.toml
+[package]
+name = "ivory-storage"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ivory-primitives = { workspace = true }
+rocksdb = { workspace = true }
+thiserror = { workspace = true }
+bincode = { workspace = true }
+parking_lot = { workspace = true }
