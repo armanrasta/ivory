@@ -38,7 +38,7 @@
 //! let doubled = value.checked_mul(U256::from(2u64)).unwrap();
 //! ```
 
-#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
 #![warn(missing_docs)]
 #![warn(clippy::all)]
 #![warn(clippy::pedantic)]
