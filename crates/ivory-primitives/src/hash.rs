@@ -22,9 +22,15 @@ use crate::error::PrimitiveError;
 macro_rules! impl_hash {
     ($name:ident, $size:expr, $doc:expr) => {
         #[doc = $doc]
-        #[derive(Clone, Copy, Default)]
+        #[derive(Clone, Copy)]
         #[repr(transparent)]
         pub struct $name(pub [u8; $size]);
+
+        impl Default for $name {
+            fn default() -> Self {
+                Self::ZERO
+            }
+        }
 
         impl $name {
             /// Size in bytes
@@ -186,8 +192,8 @@ macro_rules! impl_hash {
             pub fn from_u64(v: u64) -> Self {
                 let mut result = Self::ZERO;
                 let bytes = v.to_be_bytes();
-                let start = $size.saturating_sub(8);
-                let copy_len = 8.min($size);
+                let start = ($size as usize).saturating_sub(8);
+                let copy_len = (8 as usize).min($size as usize);
                 result.0[start..start + copy_len].copy_from_slice(&bytes[8 - copy_len..]);
                 result
             }
@@ -410,7 +416,12 @@ macro_rules! impl_hash {
                 if serializer.is_human_readable() {
                     serializer.serialize_str(&self.to_hex())
                 } else {
-                    serializer.serialize_bytes(&self.0)
+                    use serde::ser::SerializeTuple;
+                    let mut tuple = serializer.serialize_tuple($size)?;
+                    for byte in &self.0 {
+                        tuple.serialize_element(byte)?;
+                    }
+                    tuple.end()
                 }
             }
         }
@@ -421,11 +432,34 @@ macro_rules! impl_hash {
             where
                 D: serde::Deserializer<'de>,
             {
+                use serde::de::Error;
                 if deserializer.is_human_readable() {
                     let s = <alloc::string::String as serde::Deserialize>::deserialize(deserializer)?;
-                    Self::from_hex(&s).map_err(serde::de::Error::custom)
+                    Self::from_hex(&s).map_err(D::Error::custom)
                 } else {
-                    let bytes = <[u8; $size] as serde::Deserialize>::deserialize(deserializer)?;
+                    struct HashVisitor;
+
+                    impl<'de> serde::de::Visitor<'de> for HashVisitor {
+                        type Value = [u8; $size];
+
+                        fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+                            write!(formatter, "a sequence of {} bytes", $size)
+                        }
+
+                        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+                        where
+                            A: serde::de::SeqAccess<'de>,
+                        {
+                            let mut arr = [0u8; $size];
+                            for i in 0..$size {
+                                arr[i] = seq.next_element()?
+                                    .ok_or_else(|| A::Error::invalid_length(i, &self))?;
+                            }
+                            Ok(arr)
+                        }
+                    }
+
+                    let bytes = deserializer.deserialize_tuple($size, HashVisitor)?;
                     Ok(Self(bytes))
                 }
             }
