@@ -1,0 +1,4 @@
+# GCC 15+ no longer transitively includes <cstdint> in RocksDB headers.
+# See: https://github.com/facebook/rocksdb/issues/13365
+[env]
+CXXFLAGS = "-include cstdint"
