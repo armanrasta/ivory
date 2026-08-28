@@ -31,8 +31,8 @@ edition = "2024"
 rust-version = "1.75"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/armanrasta/ivory"
-authors = ["Your Name <you@example.com>"]
-keywords = ["blockchain", "cryptocurrency", "distributed-ledger"]
+authors = ["Arman Rostami <armanrostami1382@gmail.com>"]
+keywords = ["blockchain", "ledger", "distributed-systems", "wasm"]
 categories = ["cryptography", "network-programming"]
 
 [workspace.dependencies]

@@ -1,257 +1,112 @@
+# Ivory
 
+A modular blockchain in Rust — built as an immutable **decision ledger** for platforms like [Orbis](https://github.com/armanrasta), and usable as a general permissioned chain.
 
-# 🦣 Ivory Chain
+Ivory is early. Primitives, core types, in-memory state, and RocksDB storage are in place. Consensus, networking, RPC handlers, and the WASM VM are still stubs.
 
-**Lightweight blockchain for the real world**
+## Why Ivory
 
-Ivory Chain is a modular, high-performance blockchain framework written in Rust. Built for developers who want enterprise-grade blockchain capabilities without enterprise complexity.
+| | |
+|---|---|
+| **Purpose** | Timestamp and prove quantitative decisions (AHP, supply-chain opts, quality metrics) on-chain |
+| **Stack** | Rust workspace · Tokio · Axum · libp2p · RocksDB · wasmi (planned) |
+| **Consensus (v1)** | Proof-of-Authority — simple, permissioned; PoS later if needed |
+| **API** | Ethereum-style JSON-RPC over HTTP/WebSocket (in progress) |
 
-## 🚀 Project Status
+Competitors often store analytics in a database. Ivory aims to make those decisions auditable and blockchain-verified.
 
-[![CI](https://github.com/armanrasta/ivory/actions/workflows/ci.yml/badge.svg)](https://github.com/armanrasta/ivory/actions)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
+## Status
 
-## 🎯 Vision
+| Layer | Crate | Status |
+|-------|--------|--------|
+| Primitives | `ivory-primitives` | Done — `H256`, `Address`, `U256`, `Bytes`, `Signature` |
+| Crypto re-exports | `ivory-crypto` | Thin wrapper over primitives |
+| Accounts / blocks / txs | `ivory-core` | Done — types + gas validation |
+| State | `ivory-state` | Done — in-memory `StateDB` (trie later) |
+| Storage | `ivory-storage` | Done — RocksDB get/put/delete/flush |
+| Tx pool / executor / VM | `ivory-txpool`, `ivory-executor`, `ivory-vm` | Stub |
+| Consensus / chain / P2P | `ivory-consensus`, `ivory-chain`, `ivory-network` | Stub |
+| RPC | `ivory-rpc` | Types + WebSocket skeleton; handlers not wired |
+| Node binary | `bin/ivory` | CLI scaffold (`init` / `run`) |
 
-Build a lightweight, modular blockchain platform that can be used for:
-- **Fintech**: Payment systems, escrow, digital assets
-- **Supply Chain**: Tracking, provenance, logistics
-- **Enterprise**: Private networks, consortium chains
-- **DApps**: Decentralized applications, tokens, NFTs
+Track work on the [project board](https://github.com/users/armanrasta/projects/6) and [roadmap issue #24](https://github.com/armanrasta/ivory/issues/24).
 
-## 🏗️ Architecture
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    Applications                      │
-│         (Your DApps, Services, Contracts)           │
-└─────────────────────────┬───────────────────────────┘
-                          │
-┌─────────────────────────┴───────────────────────────┐
-│                     Ivory RPC                       │
-│              (JSON-RPC, WebSocket, gRPC)            │
-└─────────────────────────┬───────────────────────────┘
-                          │
-┌─────────────────────────┴───────────────────────────┐
-│                    Ivory Chain                      │
-│    ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐  │
-│    │Consensus│ │ TxPool  │ │Executor │ │  State  │  │
-│    └─────────┘ └─────────┘ └─────────┘ └─────────┘  │
-└─────────────────────────┬───────────────────────────┘
-                          │
-┌─────────────────────────┴───────────────────────────┐
-│                   Ivory Network                     │
-│                (P2P, Sync, Gossip)                  │
-└─────────────────────────┬───────────────────────────┘
-                          │
-┌─────────────────────────┴───────────────────────────┐
-│                   Ivory Storage                     │
-│                (RocksDB, Indexes)                   │
-└─────────────────────────────────────────────────────┘
+Applications / Orbis
+        │
+   ivory-rpc          JSON-RPC · WebSocket  (skeleton)
+        │
+   ivory-chain        Canonical chain · forks  (stub)
+   ├── ivory-consensus   PoA  (stub)
+   ├── ivory-txpool      Mempool  (stub)
+   ├── ivory-executor    Gas + execution  (stub)
+   │     └── ivory-vm      WASM (wasmi)  (stub)
+   └── ivory-state       Accounts + storage maps
+         └── ivory-core  Account · Block · Transaction · Receipt
+               └── ivory-primitives
+   ivory-network      libp2p gossip · sync  (stub)
+   ivory-storage      RocksDB
 ```
 
-## 🛠️ Getting Started
+## Quick start
 
-### Prerequisites
-- Rust 1.75+
-- Git
+**Requirements:** Rust 1.75+ (edition 2024 toolchain), a C++ compiler (for RocksDB). On GCC 15+, the repo sets `CXXFLAGS=-include cstdint` via [`.cargo/config.toml`](.cargo/config.toml).
 
-### Installation
 ```bash
-git clone https://github.com/armanrasta/ivory
-cd ivory-chain
-cargo build --release
+git clone https://github.com/armanrasta/ivory.git
+cd ivory
+cargo build
+cargo test -p ivory-primitives -p ivory-core -p ivory-state -p ivory-storage
 ```
 
-### Run Node
+Run the node scaffold (prints only; no full node yet):
+
 ```bash
-# Initialize chain
-ivory init
-
-# Start node
-ivory run --rpc-addr 127.0.0.1:8545
+cargo run -p ivory -- init
+cargo run -p ivory -- run
 ```
 
-## 📚 Documentation
+## Workspace layout
 
-- [Architecture Overview](docs/architecture.md)
-- [Getting Started Guide](docs/getting-started.md)
-- [API Reference](docs/api.md)
-- [Development Guide](docs/development.md)
-
-## 🤝 Contributing
-
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## 📜 License
-
-MIT/Apache 2.0 - See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE) for details.
+```
+crates/
+  ivory-primitives/   Fixed hashes, Address, U256, Bytes, Signature
+  ivory-core/         Account, Block, Transaction, Receipt
+  ivory-state/        In-memory StateDB
+  ivory-storage/      RocksDB backend
+  ivory-executor/     Transaction execution (stub)
+  ivory-vm/           WASM contracts (stub)
+  ivory-consensus/    PoA (stub)
+  ivory-chain/        Chain store (stub)
+  ivory-txpool/       Mempool (stub)
+  ivory-network/      P2P (stub)
+  ivory-rpc/          JSON-RPC types + Axum/WS skeleton
+  ivory-crypto/       Crypto re-exports
+bin/ivory/            Node CLI
+tools/                CLI helpers, keygen
+docs/                 Notes and planning sketches
 ```
 
----
+## Roadmap (high level)
 
-## 📅 PHASE PROCESSING (GitHub Issues & Milestones)
+1. **Now** — Core types and storage (mostly done)
+2. **Next** — Tx pool, executor, PoA, chain, basic P2P
+3. **Then** — JSON-RPC handlers, Orbis Python SDK
+4. **Later** — Testnet, Merkle trie, light client, audit
 
-Create these milestones and issues in your GitHub repository:
+Details: [issues](https://github.com/armanrasta/ivory/issues) · [docs/overview.md](docs/overview.md)
 
-### 🏁 Milestone 1: Foundation Layer (Due: 2 weeks)
-*Focus: Core primitives and cryptography*
+## Contributing
 
-#### Issues:
-1. **Implement Fixed Hash Types (H256, H160, H512)**  
-   `area:primitives` `type:feature` `size:medium`  
-   Implement core hash types with serialization support.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Prefer focused PRs against open issues.
 
-2. **Implement Address Type**  
-   `area:primitives` `type:feature` `size:small`  
-   Implement Ethereum-style 20-byte addresses with derivation.
+## License
 
-3. **Implement U256 (Big Integer Arithmetic)**  
-   `area:primitives` `type:feature` `size:large`  
-   Implement 256-bit unsigned integer with overflow-safe operations.
+Licensed under either of:
 
-4. **Cryptography Wrapper (Blake3 & Ed25519)**  
-   `area:crypto` `type:feature` `size:medium`  
-   Implement hashing, signing, verification, and key generation.
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
 
-5. **Merkle Tree Implementation**  
-   `area:crypto` `type:feature` `size:medium`  
-   Implement Merkle trees for transaction proofs.
-
-6. **Project Skeleton & Workspace Setup**  
-   `type:chore` `size:small`  
-   Complete workspace setup with CI/CD pipeline.
-
----
-
-### 🏁 Milestone 2: Core Blockchain (Due: 4 weeks)
-*Focus: Block structure, transactions, storage*
-
-#### Issues:
-7. **Define Block & Header Structures**  
-   `area:core` `type:feature` `size:medium`  
-   Implement block header with all necessary fields.
-
-8. **Define Transaction Structure**  
-   `area:core` `type:feature` `size:medium`  
-   Implement transaction format with signature verification.
-
-9. **RocksDB Storage Backend**  
-   `area:storage` `type:feature` `size:large`  
-   Implement persistent storage using RocksDB.
-
-10. **State Management System**  
-    `area:state` `type:feature` `size:large`  
-    Implement account state management with balance tracking.
-
-11. **Transaction Executor**  
-    `area:executor` `type:feature` `size:large`  
-    Implement transaction execution engine with gas handling.
-
----
-
-### 🏁 Milestone 3: Consensus & Networking (Due: 6 weeks)
-*Focus: Block production, consensus, P2P networking*
-
-#### Issues:
-12. **Proof of Authority Consensus**  
-    `area:consensus` `type:feature` `size:large`  
-    Implement simple PoA consensus for single-validator networks.
-
-13. **Transaction Pool (Mempool)**  
-    `area:txpool` `type:feature` `size:medium`  
-    Implement transaction pool with nonce management.
-
-14. **P2P Networking (libp2p)**  
-    `area:network` `type:feature` `size:extra-large`  
-    Implement peer discovery, block propagation, and sync.
-
-15. **Chain Management**  
-    `area:chain` `type:feature` `size:large`  
-    Implement blockchain management with fork resolution.
-
----
-
-### 🏁 Milestone 4: API & Tooling (Due: 8 weeks)
-*Focus: Developer experience, RPC, CLI tools*
-
-#### Issues:
-16. **JSON-RPC Server (Axum)**  
-    `area:rpc` `type:feature` `size:medium`  
-    Implement Ethereum-compatible JSON-RPC API.
-
-17. **WebSocket Subscriptions**  
-    `area:rpc` `type:feature` `size:medium`  
-    Implement real-time event subscriptions via WebSocket.
-
-18. **CLI Tools (ivory-cli)**  
-    `type:feature` `size:medium`  
-    Implement command-line interface for node management.
-
-19. **Key Generation Tool**  
-    `type:feature` `size:small`  
-    Implement tool for generating keypairs and addresses.
-
-20. **Documentation & Examples**  
-    `area:docs` `type:chore` `size:large`  
-    Create comprehensive documentation and example projects.
-
----
-
-### 🏁 Milestone 5: Smart Contracts (Due: 12 weeks)
-*Focus: WASM-based smart contracts*
-
-#### Issues:
-21. **WASM Virtual Machine Integration**  
-    `area:vm` `type:feature` `size:extra-large`  
-    Integrate wasmer/wasmtime for smart contract execution.
-
-22. **Contract Deployment & Execution**  
-    `area:vm` `type:feature` `size:large`  
-    Implement contract deployment and message calling.
-
-23. **Gas Metering System**  
-    `area:vm` `type:feature` `size:medium`  
-    Implement gas metering for contract execution.
-
-24. **Standard Library Contracts**  
-    `area:vm` `type:feature` `size:large`  
-    Implement standard contracts (Token, Escrow, etc.).
-
-25. **Contract SDK (Rust)**  
-    `area:vm` `type:feature` `size:large`  
-    Implement Rust SDK for writing smart contracts.
-
----
-
-## 📊 PROJECT ROADMAP
-
-```markdown
-## 🗓️ Roadmap
-
-### Phase 1: Foundation (Current)
-- [x] Project setup
-- [ ] Primitives (H256, Address, U256)
-- [ ] Cryptography (signing, hashing)
-- [ ] Core types (Block, Transaction)
-- [ ] Storage (RocksDB)
-- [ ] Basic consensus (PoA)
-
-### Phase 2: Network
-- [ ] P2P networking (libp2p)
-- [ ] Block propagation
-- [ ] Chain synchronization
-- [ ] JSON-RPC API
-
-### Phase 3: Smart Contracts
-- [ ] WASM VM integration
-- [ ] Contract deployment
-- [ ] Gas metering
-- [ ] Contract SDK
-
-### Phase 4: Production
-- [ ] Security audit
-- [ ] Performance optimization
-- [ ] Documentation
-- [ ] Mainnet launch
+at your option.
