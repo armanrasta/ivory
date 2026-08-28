@@ -19,9 +19,9 @@ enum Commands {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    
+
     tracing_subscriber::fmt::init();
-    
+
     match cli.command {
         Commands::Run => {
             println!("Starting Ivory Chain...");
@@ -30,6 +30,6 @@ async fn main() -> anyhow::Result<()> {
             println!("Initializing...");
         }
     }
-    
+
     Ok(())
 }

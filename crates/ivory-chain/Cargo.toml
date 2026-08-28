@@ -1,4 +1,3 @@
-# crates/ivory-chain/Cargo.toml
 [package]
 name = "ivory-chain"
 version.workspace = true
