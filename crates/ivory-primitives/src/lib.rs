@@ -46,19 +46,19 @@
 
 extern crate alloc;
 
-mod hash;
 mod address;
-mod uint;
-mod signature;
 mod bytes;
 mod error;
+mod hash;
+mod signature;
+mod uint;
 
-pub use hash::{H128, H160, H256, H512, H520};
 pub use address::Address;
-pub use uint::{U128, U256, U512};
-pub use signature::{Signature, PublicKey, SecretKey};
 pub use bytes::Bytes;
 pub use error::PrimitiveError;
+pub use hash::{H128, H160, H256, H512, H520};
+pub use signature::{PublicKey, SecretKey, Signature};
+pub use uint::{U128, U256, U512};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Type Aliases
@@ -92,7 +92,7 @@ pub type ChainId = u64;
 /// Convenient re-exports
 pub mod prelude {
     pub use crate::{
-        Address, Bytes, H128, H160, H256, H512, PublicKey, SecretKey, Signature,
-        U128, U256, U512, BlockNumber, ChainId, Gas, Nonce, Timestamp, TxIndex,
+        Address, BlockNumber, Bytes, ChainId, Gas, H128, H160, H256, H512, Nonce, PublicKey,
+        SecretKey, Signature, Timestamp, TxIndex, U128, U256, U512,
     };
 }

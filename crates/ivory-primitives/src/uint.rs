@@ -692,8 +692,7 @@ impl serde::Serialize for U256 {
         if serializer.is_human_readable() {
             serializer.serialize_str(&self.to_hex())
         } else {
-            let bytes = self.to_be_bytes();
-            serializer.serialize_bytes(&bytes)
+            self.to_be_bytes().serialize(serializer)
         }
     }
 }

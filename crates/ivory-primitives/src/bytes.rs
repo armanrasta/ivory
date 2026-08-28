@@ -25,6 +25,18 @@ impl Bytes {
     pub fn copy_from_slice(slice: &[u8]) -> Self {
         Self(slice.to_vec())
     }
+
+    /// Create from a byte slice (alias for [`Self::copy_from_slice`]).
+    #[inline]
+    pub fn from_slice(slice: &[u8]) -> Self {
+        Self::copy_from_slice(slice)
+    }
+
+    /// Borrow as a byte slice.
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
 }
 
 impl Deref for Bytes {
