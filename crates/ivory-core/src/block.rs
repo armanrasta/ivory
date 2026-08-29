@@ -65,6 +65,30 @@ pub struct Transaction {
     pub signature: Signature,
 }
 
+impl Transaction {
+    /// Hash this transaction.
+    ///
+    /// Placeholder: `bincode` encoding + blake3. Replaced by RLP + keccak256 in #16.
+    #[must_use]
+    pub fn hash(&self) -> H256 {
+        let encoded = bincode::serialize(self).expect("tx serialization is infallible");
+        let digest = blake3::hash(&encoded);
+        H256::from_bytes(*digest.as_bytes())
+    }
+
+    /// `true` when this transaction creates a contract (`to` is `None`).
+    #[must_use]
+    pub fn is_create(&self) -> bool {
+        self.to.is_none()
+    }
+
+    /// Length of calldata / init code in bytes.
+    #[must_use]
+    pub fn data_len(&self) -> usize {
+        self.data.as_slice().len()
+    }
+}
+
 /// Execution receipt for a transaction included in a block.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Receipt {
@@ -229,6 +253,34 @@ mod tests {
     fn contract_creation_tx_has_no_recipient() {
         let tx = test_tx(None);
         assert!(tx.to.is_none());
+        assert!(tx.is_create());
+    }
+
+    #[test]
+    fn call_tx_is_not_create() {
+        let tx = test_tx(Some(Address::from_bytes([9u8; 20])));
+        assert!(!tx.is_create());
+    }
+
+    #[test]
+    fn data_len_matches_payload() {
+        let tx = test_tx(None);
+        assert_eq!(tx.data_len(), 2);
+    }
+
+    #[test]
+    fn tx_hash_is_deterministic() {
+        let tx = test_tx(Some(Address::zero()));
+        assert_eq!(tx.hash(), tx.hash());
+        assert_ne!(tx.hash(), H256::ZERO);
+    }
+
+    #[test]
+    fn tx_hash_changes_with_nonce() {
+        let a = test_tx(Some(Address::zero()));
+        let mut b = a.clone();
+        b.nonce = 1;
+        assert_ne!(a.hash(), b.hash());
     }
 
     #[test]
