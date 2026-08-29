@@ -1,0 +1,7 @@
+# Review authorization. Enable “Require review from Code Owners” on a
+# branch ruleset so these blocks gate merges.
+
+* @armanrasta
+
+/.github/workflows/ @armanrasta
+/.github/CODEOWNERS @armanrasta

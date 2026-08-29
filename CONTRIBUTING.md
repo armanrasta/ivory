@@ -7,10 +7,12 @@ git clone https://github.com/armanrasta/ivory.git
 cd ivory
 rustup component add rustfmt clippy
 cargo build
-cargo test -p ivory-primitives -p ivory-core -p ivory-state -p ivory-storage
+cargo test -p ivory-primitives -p ivory-crypto -p ivory-core -p ivory-state -p ivory-storage -p ivory-txpool -p ivory-executor
 ```
 
 RocksDB needs a C++ toolchain. On GCC 15+, see [`.cargo/config.toml`](.cargo/config.toml).
+
+CI (`.github/workflows/ci.yml`) runs `fmt`, `clippy -D warnings` on implemented crates, and the same test packages in four blocks (`primitives`, `ledger`, `storage`, `execution`). Stub crates are not built.
 
 ## Workflow
 
@@ -20,8 +22,8 @@ RocksDB needs a C++ toolchain. On GCC 15+, see [`.cargo/config.toml`](.cargo/con
 4. Run before opening a PR:
 
 ```bash
-cargo fmt --all
-cargo clippy -p <crate> --no-deps -- -D warnings
+cargo fmt --all -- --check
+cargo clippy -p <crate> --no-deps --tests -- -D warnings
 cargo test -p <crate>
 ```
 

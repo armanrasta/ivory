@@ -1,0 +1,95 @@
+# Least-privilege CI. Each job sets its own `permissions` block (authorization).
+# Tests run only on crates that have real coverage; stub crates (network, PoA, VM)
+# are skipped so CI does not compile libp2p just to prove an empty lib.rs.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: C++ toolchain (RocksDB)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake pkg-config libclang-dev
+      - uses: Swatinem/rust-cache@v2
+      - name: clippy (implemented crates)
+        run: >
+          cargo clippy
+          -p ivory-core
+          -p ivory-state
+          -p ivory-storage
+          -p ivory-txpool
+          -p ivory-executor
+          --no-deps --tests -- -D warnings
+
+  test:
+    name: test (${{ matrix.block }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - block: primitives
+            packages: -p ivory-primitives -p ivory-crypto
+          - block: ledger
+            packages: -p ivory-core -p ivory-state
+          - block: storage
+            packages: -p ivory-storage
+          - block: execution
+            packages: -p ivory-txpool -p ivory-executor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: C++ toolchain (RocksDB)
+        if: matrix.block == 'storage'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake pkg-config libclang-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test-${{ matrix.block }}
+      - name: cargo test
+        run: cargo test --verbose ${{ matrix.packages }}
