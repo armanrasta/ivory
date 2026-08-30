@@ -23,6 +23,7 @@ members = [
     # Tools
     "tools/ivory-cli",
     "tools/ivory-keygen",
+    "tools/ivory-bench",
 ]
 
 [workspace.package]

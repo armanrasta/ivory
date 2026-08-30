@@ -85,9 +85,20 @@ crates/
   ivory-rpc/          JSON-RPC types + Axum/WS skeleton
   ivory-crypto/       Crypto re-exports
 bin/ivory/            Node CLI
-tools/                CLI helpers, keygen
+tools/                CLI helpers, keygen, Criterion benches (`ivory-bench`)
 docs/                 Notes and planning sketches
 ```
+
+## Benchmarks
+
+Hot paths for the ledger substrate (hash, state, pool, execute, pool→execute):
+
+```bash
+cargo bench -p ivory-bench
+cargo bench -p ivory-bench --bench memory
+```
+
+Recorded numbers and how to read them: [docs/benchmarks.md](docs/benchmarks.md).
 
 ## Roadmap (high level)
 
@@ -96,7 +107,7 @@ docs/                 Notes and planning sketches
 3. **Then** — JSON-RPC handlers, Orbis Python SDK
 4. **Later** — Testnet, Merkle trie, light client, audit
 
-Details: [issues](https://github.com/armanrasta/ivory/issues) · [docs/overview.md](docs/overview.md)
+Details: [issues](https://github.com/armanrasta/ivory/issues) · [docs/overview.md](docs/overview.md) · [docs/benchmarks.md](docs/benchmarks.md)
 
 ## Contributing
 

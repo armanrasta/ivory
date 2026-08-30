@@ -15,15 +15,21 @@ Ivory is a Rust blockchain workspace aimed at **permissioned ledgers** and, firs
 ## What works today
 
 - **Primitives** — hashes, addresses, `U256`, bytes, Ed25519-shaped signature types
-- **Core** — `Account`, `BlockHeader`, `Transaction`, `Receipt`, `Log`; `Block::validate` (gas)
+- **Core** — `Account`, `BlockHeader`, `Transaction`, `Receipt`, `Log`; `Block::validate` (gas); `Transaction::hash` (bincode + blake3)
 - **State** — `StateDB` over `HashMap` (no real state root yet)
 - **Storage** — `RocksDbBackend` KV API
+- **Tx pool** — strict contiguous nonces, pending entries (`ivory-txpool`)
+- **Executor** — transfers, intrinsic gas, refunds; WASM stubbed (`ivory-executor`)
 
 Header hashing is currently **bincode + blake3** (placeholder until RLP/keccak).
 
+## Benchmarks
+
+Hot-path Criterion results (hash, state, pool, execute, pipeline): [benchmarks.md](benchmarks.md).
+
 ## What is next
 
-See [issue #24](https://github.com/armanrasta/ivory/issues/24): tx pool → executor → PoA → chain → network → RPC → Orbis SDK → testnet.
+See [issue #24](https://github.com/armanrasta/ivory/issues/24): PoA → chain → network → RPC → Orbis SDK → testnet (WASM #7 in parallel).
 
 ## Crate dependency sketch
 

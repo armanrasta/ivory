@@ -1,0 +1,26 @@
+[package]
+name = "ivory-bench"
+description = "Criterion + memory benchmarks for Ivory ledger hot paths"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[[bench]]
+name = "hot_paths"
+harness = false
+
+[[bench]]
+name = "memory"
+harness = false
+
+[dependencies]
+ivory-primitives = { workspace = true }
+ivory-core = { workspace = true }
+ivory-state = { workspace = true }
+ivory-txpool = { workspace = true }
+ivory-executor = { workspace = true }
+criterion = { workspace = true }
+peak_alloc = "0.2"
+memory-stats = "1.1"

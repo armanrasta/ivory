@@ -10,6 +10,16 @@ cargo build
 cargo test -p ivory-primitives -p ivory-crypto -p ivory-core -p ivory-state -p ivory-storage -p ivory-txpool -p ivory-executor
 ```
 
+Benchmarks (Criterion) live in `tools/ivory-bench`:
+
+```bash
+cargo bench -p ivory-bench
+cargo bench -p ivory-bench --bench memory   # heap + RSS scenarios
+cargo bench -p ivory-bench -- --quick       # shorter Criterion sample
+```
+
+Recorded results: [docs/benchmarks.md](docs/benchmarks.md).
+
 RocksDB needs a C++ toolchain. On GCC 15+, see [`.cargo/config.toml`](.cargo/config.toml).
 
 CI (`.github/workflows/ci.yml`) runs `fmt`, `clippy -D warnings` on implemented crates, and the same test packages in four blocks (`primitives`, `ledger`, `storage`, `execution`). Stub crates are not built.
