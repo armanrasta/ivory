@@ -29,7 +29,7 @@ Hot-path Criterion results (hash, state, pool, execute, pipeline): [benchmarks.m
 
 ## What is next
 
-See [issue #24](https://github.com/armanrasta/ivory/issues/24): PoA → chain → network → RPC → Orbis SDK → testnet (WASM #7 in parallel).
+See [issue #24](https://github.com/armanrasta/ivory/issues/24): **#8 PoA → #9 chain** (then #10 network); **#7 WASM** in parallel; **#28** sig verify before dishonest admissions. Quant envelope: [#27](https://github.com/armanrasta/ivory/issues/27). CI/benches shipped: #25/#26.
 
 ## Crate dependency sketch
 

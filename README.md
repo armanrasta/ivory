@@ -2,7 +2,7 @@
 
 A modular blockchain in Rust — built as an immutable **decision ledger** for platforms like [Orbis](https://github.com/armanrasta), and usable as a general permissioned chain.
 
-Ivory is early. Primitives, core types, in-memory state, and RocksDB storage are in place. Consensus, networking, RPC handlers, and the WASM VM are still stubs.
+Ivory is early. Primitives, core types, in-memory state, RocksDB, tx pool, and transfer execution are in place. Consensus, networking, RPC handlers, and the WASM VM are still stubs.
 
 ## Why Ivory
 
@@ -21,10 +21,12 @@ Competitors often store analytics in a database. Ivory aims to make those decisi
 |-------|--------|--------|
 | Primitives | `ivory-primitives` | Done — `H256`, `Address`, `U256`, `Bytes`, `Signature` |
 | Crypto re-exports | `ivory-crypto` | Thin wrapper over primitives |
-| Accounts / blocks / txs | `ivory-core` | Done — types + gas validation |
+| Accounts / blocks / txs | `ivory-core` | Done — types + gas validation + `Transaction::hash` |
 | State | `ivory-state` | Done — in-memory `StateDB` (trie later) |
 | Storage | `ivory-storage` | Done — RocksDB get/put/delete/flush |
-| Tx pool / executor / VM | `ivory-txpool`, `ivory-executor`, `ivory-vm` | Stub |
+| Tx pool | `ivory-txpool` | Done — strict contiguous nonces, pending entries |
+| Executor | `ivory-executor` | Done — transfers, gas meter, refunds; WASM call stubbed |
+| VM | `ivory-vm` | Stub — wasmi (#7) |
 | Consensus / chain / P2P | `ivory-consensus`, `ivory-chain`, `ivory-network` | Stub |
 | RPC | `ivory-rpc` | Types + WebSocket skeleton; handlers not wired |
 | Node binary | `bin/ivory` | CLI scaffold (`init` / `run`) |
@@ -40,8 +42,8 @@ Applications / Orbis
         │
    ivory-chain        Canonical chain · forks  (stub)
    ├── ivory-consensus   PoA  (stub)
-   ├── ivory-txpool      Mempool  (stub)
-   ├── ivory-executor    Gas + execution  (stub)
+   ├── ivory-txpool      Mempool (strict nonces)
+   ├── ivory-executor    Gas + transfers (WASM stubbed)
    │     └── ivory-vm      WASM (wasmi)  (stub)
    └── ivory-state       Accounts + storage maps
          └── ivory-core  Account · Block · Transaction · Receipt
@@ -76,11 +78,11 @@ crates/
   ivory-core/         Account, Block, Transaction, Receipt
   ivory-state/        In-memory StateDB
   ivory-storage/      RocksDB backend
-  ivory-executor/     Transaction execution (stub)
+  ivory-executor/     Transfers + gas metering (WASM stubbed)
   ivory-vm/           WASM contracts (stub)
   ivory-consensus/    PoA (stub)
   ivory-chain/        Chain store (stub)
-  ivory-txpool/       Mempool (stub)
+  ivory-txpool/       Mempool (strict nonces)
   ivory-network/      P2P (stub)
   ivory-rpc/          JSON-RPC types + Axum/WS skeleton
   ivory-crypto/       Crypto re-exports
@@ -103,8 +105,8 @@ Recorded numbers and how to read them: [docs/benchmarks.md](docs/benchmarks.md).
 ## Roadmap (high level)
 
 1. **Now** — Core types and storage (mostly done)
-2. **Next** — Tx pool, executor, PoA, chain, basic P2P
-3. **Then** — JSON-RPC handlers, Orbis Python SDK
+2. **Next** — PoA (#8), chain (#9), WASM (#7), P2P (#10)
+3. **Then** — JSON-RPC handlers, quant envelope (#27), Orbis Python SDK
 4. **Later** — Testnet, Merkle trie, light client, audit
 
 Details: [issues](https://github.com/armanrasta/ivory/issues) · [docs/overview.md](docs/overview.md) · [docs/benchmarks.md](docs/benchmarks.md)
