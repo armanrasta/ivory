@@ -1,6 +1,6 @@
 # Least-privilege CI. Each job sets its own `permissions` block (authorization).
-# Tests run only on crates that have real coverage; stub crates (network, PoA, VM)
-# are skipped so CI does not compile libp2p just to prove an empty lib.rs.
+# Tests run on implemented crates; stub crates (network, VM) are skipped
+# so CI does not compile libp2p just to prove an empty lib.rs.
 
 name: CI
 
@@ -60,6 +60,8 @@ jobs:
           -p ivory-storage
           -p ivory-txpool
           -p ivory-executor
+          -p ivory-consensus
+          -p ivory-chain
           --no-deps --tests -- -D warnings
 
   test:
@@ -80,6 +82,8 @@ jobs:
             packages: -p ivory-storage
           - block: execution
             packages: -p ivory-txpool -p ivory-executor
+          - block: phase3
+            packages: -p ivory-consensus -p ivory-chain
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
