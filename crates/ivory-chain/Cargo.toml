@@ -9,7 +9,6 @@ ivory-core = { workspace = true }
 ivory-state = { workspace = true }
 ivory-executor = { workspace = true }
 ivory-consensus = { workspace = true }
-ivory-storage = { workspace = true }
+ivory-txpool = { workspace = true }
 thiserror = { workspace = true }
 parking_lot = { workspace = true }
-tracing = { workspace = true }
