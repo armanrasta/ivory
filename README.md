@@ -2,7 +2,7 @@
 
 A modular blockchain in Rust — built as an immutable **decision ledger** for platforms like [Orbis](https://github.com/armanrasta), and usable as a general permissioned chain.
 
-Ivory is early. Primitives, core types, in-memory state, RocksDB, tx pool, and transfer execution are in place. Consensus, networking, RPC handlers, and the WASM VM are still stubs.
+Ivory is early. Primitives, core types, in-memory state, RocksDB, tx pool, transfer execution, PoA, and an in-memory chain store are in place. Networking, RPC handlers, and the WASM VM are still stubs.
 
 ## Why Ivory
 
@@ -27,7 +27,9 @@ Competitors often store analytics in a database. Ivory aims to make those decisi
 | Tx pool | `ivory-txpool` | Done — strict contiguous nonces, pending entries |
 | Executor | `ivory-executor` | Done — transfers, gas meter, refunds; WASM call stubbed |
 | VM | `ivory-vm` | Stub — wasmi (#7) |
-| Consensus / chain / P2P | `ivory-consensus`, `ivory-chain`, `ivory-network` | Stub |
+| Consensus | `ivory-consensus` | Done — PoA validator set, seal stub in `extra_data` |
+| Chain | `ivory-chain` | Done — in-memory store, reorgs, block production |
+| P2P | `ivory-network` | Stub |
 | RPC | `ivory-rpc` | Types + WebSocket skeleton; handlers not wired |
 | Node binary | `bin/ivory` | CLI scaffold (`init` / `run`) |
 
@@ -40,8 +42,8 @@ Applications / Orbis
         │
    ivory-rpc          JSON-RPC · WebSocket  (skeleton)
         │
-   ivory-chain        Canonical chain · forks  (stub)
-   ├── ivory-consensus   PoA  (stub)
+   ivory-chain        Canonical chain · forks · BlockProducer
+   ├── ivory-consensus   PoA (seal stub)
    ├── ivory-txpool      Mempool (strict nonces)
    ├── ivory-executor    Gas + transfers (WASM stubbed)
    │     └── ivory-vm      WASM (wasmi)  (stub)
@@ -80,8 +82,8 @@ crates/
   ivory-storage/      RocksDB backend
   ivory-executor/     Transfers + gas metering (WASM stubbed)
   ivory-vm/           WASM contracts (stub)
-  ivory-consensus/    PoA (stub)
-  ivory-chain/        Chain store (stub)
+  ivory-consensus/    PoA (validator set, extra_data seal stub)
+  ivory-chain/        Canonical store + BlockProducer
   ivory-txpool/       Mempool (strict nonces)
   ivory-network/      P2P (stub)
   ivory-rpc/          JSON-RPC types + Axum/WS skeleton
@@ -105,7 +107,7 @@ Recorded numbers and how to read them: [docs/benchmarks.md](docs/benchmarks.md).
 ## Roadmap (high level)
 
 1. **Now** — Core types and storage (mostly done)
-2. **Next** — PoA (#8), chain (#9), WASM (#7), P2P (#10)
+2. **Next** — WASM (#7), P2P (#10), Ed25519 verify (#28)
 3. **Then** — JSON-RPC handlers, quant envelope (#27), Orbis Python SDK
 4. **Later** — Testnet, Merkle trie, light client, audit
 

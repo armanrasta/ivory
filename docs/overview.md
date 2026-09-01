@@ -20,6 +20,8 @@ Ivory is a Rust blockchain workspace aimed at **permissioned ledgers** and, firs
 - **Storage** — `RocksDbBackend` KV API
 - **Tx pool** — strict contiguous nonces, pending entries (`ivory-txpool`)
 - **Executor** — transfers, intrinsic gas, refunds; WASM stubbed (`ivory-executor`)
+- **Consensus** — PoA validator set; placeholder seals in `extra_data` (`ivory-consensus`)
+- **Chain** — in-memory `BlockStore`, longest-chain reorgs, `BlockProducer` (`ivory-chain`)
 
 Header hashing is currently **bincode + blake3** (placeholder until RLP/keccak).
 
@@ -29,7 +31,7 @@ Hot-path Criterion results (hash, state, pool, execute, pipeline): [benchmarks.m
 
 ## What is next
 
-See [issue #24](https://github.com/armanrasta/ivory/issues/24): **#8 PoA → #9 chain** (then #10 network); **#7 WASM** in parallel; **#28** sig verify before dishonest admissions. Quant envelope: [#27](https://github.com/armanrasta/ivory/issues/27). CI/benches shipped: #25/#26.
+See [issue #24](https://github.com/armanrasta/ivory/issues/24): **#10 network**; **#7 WASM** in parallel; **#28** sig verify before dishonest admissions. Quant envelope: [#27](https://github.com/armanrasta/ivory/issues/27). CI/benches shipped: #25/#26.
 
 ## Crate dependency sketch
 
@@ -38,5 +40,5 @@ ivory-rpc ──► ivory-core ──► ivory-primitives
 ivory-state ──► ivory-core
 ivory-storage ──► rocksdb
 ivory-executor ──► ivory-state, ivory-vm   (planned)
-ivory-chain ──► ivory-consensus, ivory-core  (planned)
+ivory-chain ──► ivory-consensus, ivory-executor, ivory-txpool
 ```
