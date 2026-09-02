@@ -12,3 +12,4 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 ivory-txpool = { workspace = true }
+ivory-crypto = { workspace = true }

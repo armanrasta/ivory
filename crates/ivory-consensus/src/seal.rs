@@ -1,16 +1,28 @@
 //! PoA seal encoding in [`ivory_core::BlockHeader::extra_data`].
 //!
-//! Placeholder: each seal is 64 zero bytes ([`Signature::zero`]). Crypto recovery
-//! lands in #28 / #16.
+//! Each seal is a 64-byte Ed25519 signature over [`seal_hash`] (header hash with
+//! empty `extra_data`). Length checks live here; cryptographic verify is in
+//! [`crate::poa`].
 
-use ivory_primitives::{Bytes, Signature};
+use ivory_core::BlockHeader;
+use ivory_primitives::{Bytes, H256, Signature};
 
 use crate::error::ConsensusError;
 
 /// Encoded length of one seal.
 pub const SEAL_LEN: usize = Signature::SIZE;
 
-/// Concatenate `count` placeholder seals.
+/// Hash used as the Ed25519 message for PoA seals.
+///
+/// `extra_data` is cleared so the signature is not taken over itself.
+#[must_use]
+pub fn seal_hash(header: &BlockHeader) -> H256 {
+    let mut unsigned = header.clone();
+    unsigned.extra_data = Bytes::new();
+    unsigned.hash()
+}
+
+/// Concatenate `count` zero seals (length helper / tests).
 ///
 /// # Errors
 ///
@@ -19,9 +31,21 @@ pub fn encode_seals(count: usize) -> Result<Bytes, ConsensusError> {
     if count == 0 {
         return Err(ConsensusError::InvalidSeal);
     }
-    let mut buf = Vec::with_capacity(count.saturating_mul(SEAL_LEN));
-    for _ in 0..count {
-        buf.extend_from_slice(Signature::zero().as_bytes());
+    encode_signatures(&vec![Signature::zero(); count])
+}
+
+/// Concatenate real Ed25519 seals.
+///
+/// # Errors
+///
+/// [`ConsensusError::InvalidSeal`] if `seals` is empty.
+pub fn encode_signatures(seals: &[Signature]) -> Result<Bytes, ConsensusError> {
+    if seals.is_empty() {
+        return Err(ConsensusError::InvalidSeal);
+    }
+    let mut buf = Vec::with_capacity(seals.len().saturating_mul(SEAL_LEN));
+    for seal in seals {
+        buf.extend_from_slice(seal.as_bytes());
     }
     Ok(Bytes::from_vec(buf))
 }
@@ -54,7 +78,7 @@ pub fn seal_count(extra_data: &Bytes) -> Result<usize, ConsensusError> {
     Ok(decode_seals(extra_data)?.len())
 }
 
-/// Check that `extra_data` holds at least `required` seals.
+/// Check that `extra_data` holds at least `required` seals (length only).
 ///
 /// # Errors
 ///
@@ -75,7 +99,26 @@ pub fn verify_seal(extra_data: &Bytes, required: usize) -> Result<(), ConsensusE
 
 #[cfg(test)]
 mod tests {
+    use ivory_core::BlockHeader;
+    use ivory_primitives::{Address, H256, U256};
+
     use super::*;
+
+    fn header() -> BlockHeader {
+        BlockHeader {
+            number: 1,
+            parent_hash: H256::ZERO,
+            timestamp: 10,
+            miner: Address::zero(),
+            gas_limit: 30_000_000,
+            gas_used: 0,
+            state_root: H256::ZERO,
+            transactions_root: H256::ZERO,
+            receipts_root: H256::ZERO,
+            difficulty: U256::ZERO,
+            extra_data: Bytes::new(),
+        }
+    }
 
     #[test]
     fn encode_one_seal_is_64_bytes() {
@@ -94,6 +137,7 @@ mod tests {
     #[test]
     fn encode_zero_is_invalid() {
         assert_eq!(encode_seals(0), Err(ConsensusError::InvalidSeal));
+        assert_eq!(encode_signatures(&[]), Err(ConsensusError::InvalidSeal));
     }
 
     #[test]
@@ -143,5 +187,14 @@ mod tests {
     fn verify_required_zero_is_invalid() {
         let extra = encode_seals(1).unwrap();
         assert_eq!(verify_seal(&extra, 0), Err(ConsensusError::InvalidSeal));
+    }
+
+    #[test]
+    fn seal_hash_ignores_extra_data() {
+        let mut a = header();
+        let b = a.clone();
+        a.extra_data = encode_seals(1).unwrap();
+        assert_eq!(seal_hash(&a), seal_hash(&b));
+        assert_ne!(a.hash(), b.hash());
     }
 }

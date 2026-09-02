@@ -6,6 +6,11 @@ edition.workspace = true
 
 [dependencies]
 ivory-crypto = { workspace = true }
+ivory-primitives = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
 hex = { workspace = true }
+
+[[bin]]
+name = "ivory-keygen"
+path = "src/main.rs"

@@ -7,4 +7,5 @@ edition.workspace = true
 [dependencies]
 ivory-primitives = { workspace = true }
 ivory-core = { workspace = true }
+ivory-crypto = { workspace = true }
 thiserror = { workspace = true }

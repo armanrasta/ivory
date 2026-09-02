@@ -72,17 +72,23 @@ impl TransactionPool {
         }
     }
 
+    /// Look up a pending transaction by hash.
+    #[must_use]
+    pub fn get(&self, hash: &H256) -> Option<Transaction> {
+        self.pending.get(hash).map(|e| e.tx.clone())
+    }
+
     /// Whether `hash` is currently pending.
     #[must_use]
     pub fn contains(&self, hash: &H256) -> bool {
         self.pending.contains_key(hash)
     }
 
-    /// Admit a transaction. Signature verification is a no-op until crypto lands.
+    /// Admit a transaction after Ed25519 verification.
     ///
     /// # Errors
     ///
-    /// Returns [`TxPoolError`] when nonce, capacity, or gas limits fail.
+    /// Returns [`TxPoolError`] when signature, nonce, capacity, or gas limits fail.
     pub fn add_transaction(&self, tx: Transaction, origin: TxOrigin) -> Result<H256, TxPoolError> {
         self.add_transaction_at(tx, origin, 0)
     }
@@ -104,6 +110,8 @@ impl TransactionPool {
                 got: tx.gas,
             });
         }
+
+        ivory_crypto::recover_sender(&tx).map_err(|_| TxPoolError::InvalidSignature)?;
 
         let hash = tx.hash();
         if self.pending.contains_key(&hash) {
@@ -198,46 +206,52 @@ impl TransactionPool {
 
 #[cfg(test)]
 mod tests {
-    use ivory_primitives::{Address, Bytes, Signature, U256};
+    use ivory_crypto::{
+        CryptoError, keypair_from_byte, recover_sender, sign_transaction, signed_tx,
+    };
+    use ivory_primitives::{Address, Bytes, SecretKey, U256};
 
     use super::*;
 
-    fn addr(byte: u8) -> Address {
-        Address::from_bytes([byte; 20])
+    fn sk(byte: u8) -> SecretKey {
+        keypair_from_byte(byte).0
     }
 
-    fn tx_with_value(from: Address, nonce: u64, gas: u64, value: u64) -> Transaction {
-        Transaction {
-            from,
-            to: Some(addr(9)),
-            value: U256::from(value),
-            data: Bytes::new(),
-            gas_price: U256::from(1u64),
-            gas,
+    fn addr_of(byte: u8) -> Address {
+        keypair_from_byte(byte).2
+    }
+
+    fn tx_with_value(from_seed: u8, nonce: u64, gas: u64, value: u64) -> Transaction {
+        signed_tx(
+            &sk(from_seed),
+            Some(addr_of(9)),
             nonce,
-            signature: Signature::zero(),
-        }
+            U256::from(value),
+            gas,
+            U256::from(1u64),
+            Bytes::new(),
+        )
     }
 
-    fn tx(from: Address, nonce: u64, gas: u64) -> Transaction {
-        tx_with_value(from, nonce, gas, 1)
+    fn tx(from_seed: u8, nonce: u64, gas: u64) -> Transaction {
+        tx_with_value(from_seed, nonce, gas, 1)
     }
 
-    fn default_tx(from: Address, nonce: u64) -> Transaction {
-        tx(from, nonce, 21_000)
+    fn default_tx(from_seed: u8, nonce: u64) -> Transaction {
+        tx(from_seed, nonce, 21_000)
     }
 
     #[test]
     fn accepts_nonce_zero_then_one() {
         let pool = TransactionPool::new();
-        let a = addr(1);
+        let a = addr_of(1);
         assert_eq!(
-            pool.add_transaction(default_tx(a, 0), TxOrigin::Local)
+            pool.add_transaction(default_tx(1, 0), TxOrigin::Local)
                 .unwrap(),
-            default_tx(a, 0).hash()
+            default_tx(1, 0).hash()
         );
         assert_eq!(pool.expected_nonce(&a), 1);
-        pool.add_transaction(default_tx(a, 1), TxOrigin::Local)
+        pool.add_transaction(default_tx(1, 1), TxOrigin::Local)
             .unwrap();
         assert_eq!(pool.expected_nonce(&a), 2);
         assert_eq!(pool.pending_count(), 2);
@@ -246,7 +260,7 @@ mod tests {
     #[test]
     fn rejects_duplicate_hash() {
         let pool = TransactionPool::new();
-        let t = default_tx(addr(1), 0);
+        let t = default_tx(1, 0);
         pool.add_transaction(t.clone(), TxOrigin::Local).unwrap();
         assert_eq!(
             pool.add_transaction(t, TxOrigin::Remote),
@@ -257,24 +271,24 @@ mod tests {
     #[test]
     fn rejects_nonce_too_low() {
         let pool = TransactionPool::new();
-        let a = addr(1);
-        pool.add_transaction(default_tx(a, 0), TxOrigin::Local)
+        let a = addr_of(1);
+        pool.add_transaction(default_tx(1, 0), TxOrigin::Local)
             .unwrap();
-        // Distinct hash, same nonce — not AlreadyKnown.
         assert_eq!(
-            pool.add_transaction(tx_with_value(a, 0, 21_000, 2), TxOrigin::Local),
+            pool.add_transaction(tx_with_value(1, 0, 21_000, 2), TxOrigin::Local),
             Err(TxPoolError::NonceTooLow {
                 expected: 1,
                 got: 0
             })
         );
+        assert_eq!(pool.expected_nonce(&a), 1);
     }
 
     #[test]
     fn rejects_nonce_gap() {
         let pool = TransactionPool::new();
         assert_eq!(
-            pool.add_transaction(default_tx(addr(1), 2), TxOrigin::Local),
+            pool.add_transaction(default_tx(1, 2), TxOrigin::Local),
             Err(TxPoolError::NonceGap {
                 expected: 0,
                 got: 2
@@ -285,21 +299,21 @@ mod tests {
     #[test]
     fn senders_are_independent() {
         let pool = TransactionPool::new();
-        pool.add_transaction(default_tx(addr(1), 0), TxOrigin::Local)
+        pool.add_transaction(default_tx(1, 0), TxOrigin::Local)
             .unwrap();
-        pool.add_transaction(default_tx(addr(2), 0), TxOrigin::Local)
+        pool.add_transaction(default_tx(2, 0), TxOrigin::Local)
             .unwrap();
         assert_eq!(pool.pending_count(), 2);
-        assert_eq!(pool.expected_nonce(&addr(1)), 1);
-        assert_eq!(pool.expected_nonce(&addr(2)), 1);
+        assert_eq!(pool.expected_nonce(&addr_of(1)), 1);
+        assert_eq!(pool.expected_nonce(&addr_of(2)), 1);
     }
 
     #[test]
     fn get_pending_respects_max() {
         let pool = TransactionPool::new();
-        pool.add_transaction(default_tx(addr(1), 0), TxOrigin::Local)
+        pool.add_transaction(default_tx(1, 0), TxOrigin::Local)
             .unwrap();
-        pool.add_transaction(default_tx(addr(1), 1), TxOrigin::Local)
+        pool.add_transaction(default_tx(1, 1), TxOrigin::Local)
             .unwrap();
         assert_eq!(pool.get_pending(1).len(), 1);
         assert_eq!(pool.get_pending(10).len(), 2);
@@ -309,7 +323,7 @@ mod tests {
     #[test]
     fn get_pending_entries_include_origin() {
         let pool = TransactionPool::new();
-        pool.add_transaction_at(default_tx(addr(1), 0), TxOrigin::Remote, 42)
+        pool.add_transaction_at(default_tx(1, 0), TxOrigin::Remote, 42)
             .unwrap();
         let entries = pool.get_pending_entries(1);
         assert_eq!(entries.len(), 1);
@@ -320,8 +334,8 @@ mod tests {
     #[test]
     fn remove_drops_pending_not_nonce() {
         let pool = TransactionPool::new();
-        let a = addr(1);
-        let t = default_tx(a, 0);
+        let a = addr_of(1);
+        let t = default_tx(1, 0);
         let hash = pool.add_transaction(t, TxOrigin::Local).unwrap();
         let removed = pool.remove(&hash).unwrap();
         assert_eq!(removed.hash, hash);
@@ -329,7 +343,7 @@ mod tests {
         assert_eq!(pool.expected_nonce(&a), 1);
         assert!(!pool.contains(&hash));
         assert_eq!(
-            pool.add_transaction(default_tx(a, 0), TxOrigin::Local),
+            pool.add_transaction(default_tx(1, 0), TxOrigin::Local),
             Err(TxPoolError::NonceTooLow {
                 expected: 1,
                 got: 0
@@ -346,18 +360,19 @@ mod tests {
     #[test]
     fn contains_after_add() {
         let pool = TransactionPool::new();
-        let t = default_tx(addr(1), 0);
+        let t = default_tx(1, 0);
         let hash = t.hash();
         assert!(!pool.contains(&hash));
         pool.add_transaction(t, TxOrigin::Local).unwrap();
         assert!(pool.contains(&hash));
+        assert!(pool.get(&hash).is_some());
     }
 
     #[test]
     fn rejects_gas_below_minimum() {
         let pool = TransactionPool::new();
         assert_eq!(
-            pool.add_transaction(tx(addr(1), 0, 20_999), TxOrigin::Local),
+            pool.add_transaction(tx(1, 0, 20_999), TxOrigin::Local),
             Err(TxPoolError::GasLimitTooLow {
                 min: 21_000,
                 got: 20_999
@@ -368,12 +383,12 @@ mod tests {
     #[test]
     fn rejects_when_pool_full() {
         let pool = TransactionPool::with_config(PoolConfig::tiny());
-        pool.add_transaction(default_tx(addr(1), 0), TxOrigin::Local)
+        pool.add_transaction(default_tx(1, 0), TxOrigin::Local)
             .unwrap();
-        pool.add_transaction(default_tx(addr(2), 0), TxOrigin::Local)
+        pool.add_transaction(default_tx(2, 0), TxOrigin::Local)
             .unwrap();
         assert_eq!(
-            pool.add_transaction(default_tx(addr(3), 0), TxOrigin::Local),
+            pool.add_transaction(default_tx(3, 0), TxOrigin::Local),
             Err(TxPoolError::PoolFull)
         );
     }
@@ -381,10 +396,10 @@ mod tests {
     #[test]
     fn rejects_when_sender_limit_reached() {
         let pool = TransactionPool::with_config(PoolConfig::tiny());
-        pool.add_transaction(default_tx(addr(1), 0), TxOrigin::Local)
+        pool.add_transaction(default_tx(1, 0), TxOrigin::Local)
             .unwrap();
         assert_eq!(
-            pool.add_transaction(default_tx(addr(1), 1), TxOrigin::Local),
+            pool.add_transaction(default_tx(1, 1), TxOrigin::Local),
             Err(TxPoolError::SenderLimitReached)
         );
     }
@@ -392,9 +407,9 @@ mod tests {
     #[test]
     fn stats_track_pending_and_senders() {
         let pool = TransactionPool::new();
-        pool.add_transaction(default_tx(addr(1), 0), TxOrigin::Local)
+        pool.add_transaction(default_tx(1, 0), TxOrigin::Local)
             .unwrap();
-        pool.add_transaction(default_tx(addr(2), 0), TxOrigin::Local)
+        pool.add_transaction(default_tx(2, 0), TxOrigin::Local)
             .unwrap();
         let stats = pool.stats();
         assert_eq!(stats.pending, 2);
@@ -404,21 +419,21 @@ mod tests {
     #[test]
     fn clear_resets_nonces() {
         let pool = TransactionPool::new();
-        let a = addr(1);
-        pool.add_transaction(default_tx(a, 0), TxOrigin::Local)
+        let a = addr_of(1);
+        pool.add_transaction(default_tx(1, 0), TxOrigin::Local)
             .unwrap();
         pool.clear();
         assert_eq!(pool.pending_count(), 0);
         assert_eq!(pool.expected_nonce(&a), 0);
-        pool.add_transaction(default_tx(a, 0), TxOrigin::Local)
+        pool.add_transaction(default_tx(1, 0), TxOrigin::Local)
             .unwrap();
     }
 
     #[test]
     fn clear_pending_keeps_nonce_tracker() {
         let pool = TransactionPool::new();
-        let a = addr(1);
-        pool.add_transaction(default_tx(a, 0), TxOrigin::Local)
+        let a = addr_of(1);
+        pool.add_transaction(default_tx(1, 0), TxOrigin::Local)
             .unwrap();
         pool.clear_pending();
         assert_eq!(pool.pending_count(), 0);
@@ -429,5 +444,32 @@ mod tests {
     fn default_pool_matches_new() {
         let pool = TransactionPool::default();
         assert_eq!(pool.pending_count(), 0);
+    }
+
+    #[test]
+    fn rejects_invalid_signature() {
+        let pool = TransactionPool::new();
+        let mut t = default_tx(1, 0);
+        let mut bytes = t.signature.to_bytes();
+        bytes[0] ^= 0xff;
+        t.signature = ivory_primitives::Signature::from_bytes(bytes);
+        assert_eq!(recover_sender(&t), Err(CryptoError::InvalidSignature));
+        assert_eq!(
+            pool.add_transaction(t, TxOrigin::Local),
+            Err(TxPoolError::InvalidSignature)
+        );
+    }
+
+    #[test]
+    fn rejects_key_mismatch() {
+        let pool = TransactionPool::new();
+        let mut t = default_tx(1, 0);
+        t.from = addr_of(2);
+        sign_transaction(&mut t, &sk(1));
+        t.from = addr_of(2);
+        assert_eq!(
+            pool.add_transaction(t, TxOrigin::Local),
+            Err(TxPoolError::InvalidSignature)
+        );
     }
 }

@@ -10,5 +10,6 @@ ivory-state = { workspace = true }
 ivory-executor = { workspace = true }
 ivory-consensus = { workspace = true }
 ivory-txpool = { workspace = true }
+ivory-crypto = { workspace = true }
 thiserror = { workspace = true }
 parking_lot = { workspace = true }

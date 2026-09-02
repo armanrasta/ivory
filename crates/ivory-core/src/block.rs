@@ -1,6 +1,6 @@
 //! Block, transaction, receipt, and log types.
 
-use ivory_primitives::{Address, Bytes, H256, Signature, U256};
+use ivory_primitives::{Address, Bytes, H256, PublicKey, Signature, U256};
 use serde::{Deserialize, Serialize};
 
 use crate::error::BlockError;
@@ -63,15 +63,53 @@ pub struct Transaction {
     pub nonce: u64,
     /// Ed25519 transaction signature.
     pub signature: Signature,
+    /// Ed25519 public key used to verify [`Self::signature`].
+    ///
+    /// Not part of [`Self::signing_hash`]; admission still checks that
+    /// `address_from_public_key(public_key) == from`.
+    pub public_key: PublicKey,
+}
+
+/// Unsigned fields hashed for Ed25519 (excludes `signature` and `public_key`).
+#[derive(Serialize)]
+struct UnsignedTransaction<'a> {
+    from: Address,
+    to: Option<Address>,
+    value: U256,
+    data: &'a Bytes,
+    gas_price: U256,
+    gas: u64,
+    nonce: u64,
 }
 
 impl Transaction {
-    /// Hash this transaction.
+    /// Hash this transaction (includes signature and public key).
     ///
     /// Placeholder: `bincode` encoding + blake3. Replaced by RLP + keccak256 in #16.
     #[must_use]
     pub fn hash(&self) -> H256 {
         let encoded = bincode::serialize(self).expect("tx serialization is infallible");
+        let digest = blake3::hash(&encoded);
+        H256::from_bytes(*digest.as_bytes())
+    }
+
+    /// Domain-separated signing payload for Ed25519.
+    ///
+    /// `bincode` of unsigned fields + blake3. Independent of `signature` /
+    /// `public_key`. Replaced by RLP + keccak256 in #16.
+    #[must_use]
+    pub fn signing_hash(&self) -> H256 {
+        let unsigned = UnsignedTransaction {
+            from: self.from,
+            to: self.to,
+            value: self.value,
+            data: &self.data,
+            gas_price: self.gas_price,
+            gas: self.gas,
+            nonce: self.nonce,
+        };
+        let encoded =
+            bincode::serialize(&unsigned).expect("unsigned tx serialization is infallible");
         let digest = blake3::hash(&encoded);
         H256::from_bytes(*digest.as_bytes())
     }
@@ -176,6 +214,7 @@ mod tests {
             gas: 21_000,
             nonce: 0,
             signature: Signature::zero(),
+            public_key: PublicKey::zero(),
         }
     }
 
@@ -280,6 +319,15 @@ mod tests {
         let a = test_tx(Some(Address::zero()));
         let mut b = a.clone();
         b.nonce = 1;
+        assert_ne!(a.hash(), b.hash());
+    }
+
+    #[test]
+    fn signing_hash_ignores_signature() {
+        let a = test_tx(Some(Address::zero()));
+        let mut b = a.clone();
+        b.signature = Signature::from_bytes([1u8; 64]);
+        assert_eq!(a.signing_hash(), b.signing_hash());
         assert_ne!(a.hash(), b.hash());
     }
 

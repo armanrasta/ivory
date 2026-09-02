@@ -88,7 +88,7 @@ pub fn compute_intrinsic_gas(tx: &Transaction, cfg: &GasConfig) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use ivory_primitives::{Address, Bytes, Signature, U256};
+    use ivory_primitives::{Address, Bytes, PublicKey, Signature, U256};
 
     use super::*;
 
@@ -102,6 +102,7 @@ mod tests {
             gas,
             nonce: 0,
             signature: Signature::zero(),
+            public_key: PublicKey::zero(),
         }
     }
 

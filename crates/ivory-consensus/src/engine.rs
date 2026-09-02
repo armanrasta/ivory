@@ -1,7 +1,7 @@
 //! Consensus engine trait.
 
 use ivory_core::BlockHeader;
-use ivory_primitives::Address;
+use ivory_primitives::{Address, SecretKey};
 
 use crate::error::ConsensusError;
 
@@ -21,10 +21,16 @@ pub trait ConsensusEngine {
         parent: Option<&BlockHeader>,
     ) -> Result<(), ConsensusError>;
 
-    /// Write the PoA seal into `header.extra_data`.
+    /// Sign the header (empty `extra_data` hash) and write seals into `extra_data`.
     ///
     /// # Errors
     ///
-    /// [`ConsensusError::NotValidator`] if `miner` is not authorized.
-    fn seal_header(&self, header: &mut BlockHeader, miner: &Address) -> Result<(), ConsensusError>;
+    /// [`ConsensusError::NotValidator`] if `miner` is not authorized or does not
+    /// match `secret`.
+    fn seal_header(
+        &self,
+        header: &mut BlockHeader,
+        miner: &Address,
+        secret: &SecretKey,
+    ) -> Result<(), ConsensusError>;
 }

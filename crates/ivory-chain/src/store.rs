@@ -3,12 +3,23 @@
 use std::collections::HashMap;
 
 use ivory_consensus::{ConsensusEngine, PoAConsensus};
-use ivory_core::Block;
+use ivory_core::{Block, Transaction};
 use ivory_primitives::H256;
 use ivory_state::StateDB;
 use parking_lot::RwLock;
 
 use crate::error::ChainError;
+
+/// Where a transaction was included.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TxLocation {
+    /// Containing block hash.
+    pub block_hash: H256,
+    /// Block number.
+    pub block_number: u64,
+    /// Index in `block.transactions`.
+    pub index: usize,
+}
 
 /// Indexed blocks plus optional per-height state snapshots.
 pub struct BlockStore {
@@ -17,6 +28,7 @@ pub struct BlockStore {
     by_number: RwLock<HashMap<u64, H256>>,
     head: RwLock<Option<H256>>,
     snapshots: RwLock<HashMap<u64, StateDB>>,
+    tx_index: RwLock<HashMap<H256, TxLocation>>,
     consensus: PoAConsensus,
 }
 
@@ -29,6 +41,7 @@ impl BlockStore {
             by_number: RwLock::new(HashMap::new()),
             head: RwLock::new(None),
             snapshots: RwLock::new(HashMap::new()),
+            tx_index: RwLock::new(HashMap::new()),
             consensus,
         }
     }
@@ -57,6 +70,15 @@ impl BlockStore {
     pub fn get_block_by_number(&self, number: u64) -> Option<Block> {
         let hash = self.by_number.read().get(&number).copied()?;
         self.get_block(&hash)
+    }
+
+    /// Look up an included transaction by hash.
+    #[must_use]
+    pub fn get_transaction(&self, hash: &H256) -> Option<(Transaction, TxLocation)> {
+        let loc = *self.tx_index.read().get(hash)?;
+        let block = self.get_block(&loc.block_hash)?;
+        let tx = block.transactions.get(loc.index)?.clone();
+        Some((tx, loc))
     }
 
     /// Snapshot recorded at `number` (if the producer stored one).
@@ -119,6 +141,19 @@ impl BlockStore {
             return Err(ChainError::DuplicateBlock);
         }
         let number = block.header.number;
+        {
+            let mut tx_index = self.tx_index.write();
+            for (index, tx) in block.transactions.iter().enumerate() {
+                tx_index.insert(
+                    tx.hash(),
+                    TxLocation {
+                        block_hash: hash,
+                        block_number: number,
+                        index,
+                    },
+                );
+            }
+        }
         self.by_hash.write().insert(hash, block);
         self.maybe_update_canonical(hash, number);
         Ok(hash)
@@ -172,19 +207,23 @@ impl BlockStore {
 
 #[cfg(test)]
 mod tests {
-    use ivory_consensus::PoAConsensus;
+    use ivory_consensus::{ConsensusEngine, PoAConsensus, encode_seals};
     use ivory_core::{Block, BlockHeader};
-    use ivory_primitives::{Address, Bytes, H256, U256};
+    use ivory_crypto::keypair_from_byte;
+    use ivory_primitives::{Address, Bytes, H256, SecretKey, U256};
 
     use super::*;
-    use ivory_consensus::{ConsensusEngine, encode_seals};
+
+    fn miner_sk() -> SecretKey {
+        keypair_from_byte(1).0
+    }
 
     fn miner() -> Address {
-        Address::from_bytes([1u8; 20])
+        keypair_from_byte(1).2
     }
 
     fn poa() -> PoAConsensus {
-        PoAConsensus::with_validator(miner()).unwrap()
+        PoAConsensus::from_secret(&miner_sk()).unwrap()
     }
 
     fn sealed_header(number: u64, parent: H256, ts: u64) -> BlockHeader {
@@ -201,7 +240,7 @@ mod tests {
             difficulty: U256::ZERO,
             extra_data: Bytes::new(),
         };
-        poa().seal_header(&mut h, &miner()).unwrap();
+        poa().seal_header(&mut h, &miner(), &miner_sk()).unwrap();
         h
     }
 
@@ -233,7 +272,9 @@ mod tests {
         let store = BlockStore::new(poa());
         let mut g = genesis();
         g.header.number = 1;
-        poa().seal_header(&mut g.header, &miner()).unwrap();
+        poa()
+            .seal_header(&mut g.header, &miner(), &miner_sk())
+            .unwrap();
         assert_eq!(store.insert_genesis(g), Err(ChainError::InvalidGenesis));
     }
 
@@ -242,7 +283,9 @@ mod tests {
         let store = BlockStore::new(poa());
         let mut g = genesis();
         g.header.parent_hash = H256::from_bytes([9u8; 32]);
-        poa().seal_header(&mut g.header, &miner()).unwrap();
+        poa()
+            .seal_header(&mut g.header, &miner(), &miner_sk())
+            .unwrap();
         assert_eq!(store.insert_genesis(g), Err(ChainError::InvalidGenesis));
     }
 

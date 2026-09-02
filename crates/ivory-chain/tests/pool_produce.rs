@@ -2,22 +2,27 @@
 
 use ivory_chain::{BlockProducer, BlockStore, ProduceParams};
 use ivory_consensus::{ConsensusEngine, PoAConsensus};
-use ivory_core::{Account, Block, BlockHeader, Transaction};
+use ivory_core::{Account, Block, BlockHeader};
+use ivory_crypto::{keypair_from_byte, signed_transfer};
 use ivory_executor::Executor;
-use ivory_primitives::{Address, Bytes, H256, Signature, U256};
+use ivory_primitives::{Address, Bytes, H256, SecretKey, U256};
 use ivory_state::StateDB;
 use ivory_txpool::{TransactionPool, TxOrigin};
 
+fn miner_sk() -> SecretKey {
+    keypair_from_byte(9).0
+}
+
 fn miner() -> Address {
-    Address::from_bytes([9u8; 20])
+    keypair_from_byte(9).2
 }
 
 fn addr(b: u8) -> Address {
-    Address::from_bytes([b; 20])
+    keypair_from_byte(b).2
 }
 
 fn poa() -> PoAConsensus {
-    PoAConsensus::with_validator(miner()).unwrap()
+    PoAConsensus::from_secret(&miner_sk()).unwrap()
 }
 
 fn genesis() -> Block {
@@ -34,7 +39,9 @@ fn genesis() -> Block {
         difficulty: U256::ZERO,
         extra_data: Bytes::new(),
     };
-    poa().seal_header(&mut header, &miner()).unwrap();
+    poa()
+        .seal_header(&mut header, &miner(), &miner_sk())
+        .unwrap();
     Block {
         header,
         transactions: Vec::new(),
@@ -42,17 +49,14 @@ fn genesis() -> Block {
     }
 }
 
-fn transfer(from: Address, to: Address, nonce: u64) -> Transaction {
-    Transaction {
-        from,
-        to: Some(to),
-        value: U256::from(10u64),
-        data: Bytes::new(),
-        gas_price: U256::ONE,
-        gas: 21_000,
+fn transfer(from_seed: u8, to_seed: u8, nonce: u64) -> ivory_core::Transaction {
+    signed_transfer(
+        &keypair_from_byte(from_seed).0,
+        addr(to_seed),
         nonce,
-        signature: Signature::zero(),
-    }
+        U256::from(10u64),
+        21_000,
+    )
 }
 
 #[test]
@@ -69,12 +73,13 @@ fn pool_produce_insert() {
     state.set_account(from, account);
 
     let pool = TransactionPool::new();
-    pool.add_transaction(transfer(from, to, 0), TxOrigin::Local)
+    pool.add_transaction(transfer(1, 2, 0), TxOrigin::Local)
         .unwrap();
-    pool.add_transaction(transfer(from, to, 1), TxOrigin::Local)
+    pool.add_transaction(transfer(1, 2, 1), TxOrigin::Local)
         .unwrap();
 
     let exec = Executor::new(state);
+    let miner_key = miner_sk();
     let block = BlockProducer::new()
         .produce_block(ProduceParams {
             parent: &g,
@@ -82,6 +87,7 @@ fn pool_produce_insert() {
             executor: &exec,
             consensus: &poa(),
             miner: miner(),
+            miner_key: &miner_key,
             timestamp: 2,
             max_txs: 8,
         })

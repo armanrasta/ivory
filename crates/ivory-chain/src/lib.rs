@@ -8,4 +8,4 @@ pub mod store;
 
 pub use error::ChainError;
 pub use producer::{BlockProducer, ProduceParams};
-pub use store::BlockStore;
+pub use store::{BlockStore, TxLocation};

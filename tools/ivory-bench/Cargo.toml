@@ -17,6 +17,7 @@ harness = false
 
 [dependencies]
 ivory-primitives = { workspace = true }
+ivory-crypto = { workspace = true }
 ivory-core = { workspace = true }
 ivory-state = { workspace = true }
 ivory-txpool = { workspace = true }

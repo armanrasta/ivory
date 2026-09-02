@@ -38,4 +38,7 @@ pub enum TxPoolError {
     /// Sender already has `max_per_sender` pending transactions.
     #[error("sender pending limit reached")]
     SenderLimitReached,
+    /// Ed25519 signature is invalid or does not match `tx.from`.
+    #[error("invalid transaction signature")]
+    InvalidSignature,
 }

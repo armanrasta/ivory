@@ -3,7 +3,7 @@
 use ivory_consensus::{ConsensusEngine, PoAConsensus};
 use ivory_core::{Block, BlockHeader, Receipt, Transaction};
 use ivory_executor::{ExecutionContext, Executor, GasConfig};
-use ivory_primitives::{Address, H256, U256};
+use ivory_primitives::{Address, H256, SecretKey, U256};
 use ivory_txpool::TransactionPool;
 
 use crate::error::ChainError;
@@ -20,6 +20,8 @@ pub struct ProduceParams<'a> {
     pub consensus: &'a PoAConsensus,
     /// Block miner (must be a validator).
     pub miner: Address,
+    /// Miner Ed25519 secret used to seal the header.
+    pub miner_key: &'a SecretKey,
     /// Header timestamp.
     pub timestamp: u64,
     /// Cap on `pool.get_pending`.
@@ -55,6 +57,7 @@ impl BlockProducer {
     /// Pull up to `max_txs` from `pool`, execute in `(from, nonce)` order, seal.
     ///
     /// Transactions that fail execution are skipped (v1 mempool honesty).
+    /// Signatures are checked at pool admission, not here.
     ///
     /// # Errors
     ///
@@ -66,6 +69,7 @@ impl BlockProducer {
             executor,
             consensus,
             miner,
+            miner_key,
             timestamp,
             max_txs,
         } = params;
@@ -100,7 +104,7 @@ impl BlockProducer {
             difficulty: U256::ZERO,
             extra_data: ivory_primitives::Bytes::new(),
         };
-        consensus.seal_header(&mut header, &miner)?;
+        consensus.seal_header(&mut header, &miner, miner_key)?;
 
         Ok(Block {
             header,
@@ -112,25 +116,30 @@ impl BlockProducer {
 
 #[cfg(test)]
 mod tests {
-    use ivory_consensus::PoAConsensus;
-    use ivory_core::{Account, Block, BlockHeader, Transaction};
-    use ivory_primitives::{Address, Bytes, H256, Signature, U256};
+    use ivory_consensus::{ConsensusEngine, PoAConsensus};
+    use ivory_core::{Account, Block, BlockHeader};
+    use ivory_crypto::{keypair_from_byte, signed_transfer, signed_tx};
+    use ivory_primitives::{Address, Bytes, H256, SecretKey, U256};
     use ivory_state::StateDB;
     use ivory_txpool::{TransactionPool, TxOrigin};
 
     use super::*;
     use crate::store::BlockStore;
 
+    fn miner_sk() -> SecretKey {
+        keypair_from_byte(9).0
+    }
+
     fn miner() -> Address {
-        Address::from_bytes([9u8; 20])
+        keypair_from_byte(9).2
     }
 
     fn addr(b: u8) -> Address {
-        Address::from_bytes([b; 20])
+        keypair_from_byte(b).2
     }
 
     fn poa() -> PoAConsensus {
-        PoAConsensus::with_validator(miner()).unwrap()
+        PoAConsensus::from_secret(&miner_sk()).unwrap()
     }
 
     fn genesis_block() -> Block {
@@ -147,7 +156,9 @@ mod tests {
             difficulty: U256::ZERO,
             extra_data: Bytes::new(),
         };
-        poa().seal_header(&mut header, &miner()).unwrap();
+        poa()
+            .seal_header(&mut header, &miner(), &miner_sk())
+            .unwrap();
         Block {
             header,
             transactions: Vec::new(),
@@ -155,17 +166,14 @@ mod tests {
         }
     }
 
-    fn transfer(from: Address, to: Address, nonce: u64) -> Transaction {
-        Transaction {
-            from,
-            to: Some(to),
-            value: U256::from(10u64),
-            data: Bytes::new(),
-            gas_price: U256::ONE,
-            gas: 21_000,
+    fn transfer(from_seed: u8, to_seed: u8, nonce: u64) -> ivory_core::Transaction {
+        signed_transfer(
+            &keypair_from_byte(from_seed).0,
+            addr(to_seed),
             nonce,
-            signature: Signature::zero(),
-        }
+            U256::from(10u64),
+            21_000,
+        )
     }
 
     fn funded(balance: u64) -> Account {
@@ -180,6 +188,7 @@ mod tests {
         exec: &'a Executor,
         consensus: &'a PoAConsensus,
         miner: Address,
+        miner_key: &'a SecretKey,
         timestamp: u64,
     ) -> ProduceParams<'a> {
         ProduceParams {
@@ -188,6 +197,7 @@ mod tests {
             executor: exec,
             consensus,
             miner,
+            miner_key,
             timestamp,
             max_txs: 8,
         }
@@ -199,8 +209,9 @@ mod tests {
         let pool = TransactionPool::new();
         let exec = Executor::new(StateDB::new());
         let poa = poa();
+        let miner_key = miner_sk();
         let block = BlockProducer::new()
-            .produce_block(params(&parent, &pool, &exec, &poa, miner(), 2))
+            .produce_block(params(&parent, &pool, &exec, &poa, miner(), &miner_key, 2))
             .unwrap();
         assert_eq!(block.header.number, 1);
         assert_eq!(block.header.parent_hash, parent.hash());
@@ -216,8 +227,9 @@ mod tests {
         let pool = TransactionPool::new();
         let exec = Executor::new(StateDB::new());
         let poa = poa();
+        let other = keypair_from_byte(3).0;
         let err = BlockProducer::new()
-            .produce_block(params(&parent, &pool, &exec, &poa, addr(3), 2))
+            .produce_block(params(&parent, &pool, &exec, &poa, addr(3), &other, 2))
             .unwrap_err();
         assert!(matches!(err, ChainError::Consensus(_)));
     }
@@ -229,14 +241,23 @@ mod tests {
         let to = addr(2);
         state.set_account(from, funded(1_000_000));
         let pool = TransactionPool::new();
-        pool.add_transaction(transfer(from, to, 0), TxOrigin::Local)
+        pool.add_transaction(transfer(1, 2, 0), TxOrigin::Local)
             .unwrap();
-        pool.add_transaction(transfer(from, to, 1), TxOrigin::Local)
+        pool.add_transaction(transfer(1, 2, 1), TxOrigin::Local)
             .unwrap();
         let exec = Executor::new(state);
         let parent = genesis_block();
+        let miner_key = miner_sk();
         let block = BlockProducer::new()
-            .produce_block(params(&parent, &pool, &exec, &poa(), miner(), 2))
+            .produce_block(params(
+                &parent,
+                &pool,
+                &exec,
+                &poa(),
+                miner(),
+                &miner_key,
+                2,
+            ))
             .unwrap();
         assert_eq!(block.transactions.len(), 2);
         assert_eq!(block.receipts.len(), 2);
@@ -254,18 +275,31 @@ mod tests {
         let from = addr(1);
         state.set_account(from, funded(1_000_000));
         let pool = TransactionPool::new();
-        // Wrong nonce relative to account (account nonce 0, tx nonce 5) — pool
-        // may still hold it if admitted as first tx; use nonce 0 then a gap-free
-        // second that fails balance by using a huge value after first spends.
-        pool.add_transaction(transfer(from, addr(2), 0), TxOrigin::Local)
+        pool.add_transaction(transfer(1, 2, 0), TxOrigin::Local)
             .unwrap();
-        let mut expensive = transfer(from, addr(2), 1);
-        expensive.value = U256::from(u64::MAX);
+        let expensive = signed_tx(
+            &keypair_from_byte(1).0,
+            Some(addr(2)),
+            1,
+            U256::from(u64::MAX),
+            21_000,
+            U256::ONE,
+            Bytes::new(),
+        );
         pool.add_transaction(expensive, TxOrigin::Local).unwrap();
         let exec = Executor::new(state);
         let parent = genesis_block();
+        let miner_key = miner_sk();
         let block = BlockProducer::new()
-            .produce_block(params(&parent, &pool, &exec, &poa(), miner(), 2))
+            .produce_block(params(
+                &parent,
+                &pool,
+                &exec,
+                &poa(),
+                miner(),
+                &miner_key,
+                2,
+            ))
             .unwrap();
         assert_eq!(block.transactions.len(), 1);
         assert_eq!(exec.state().get_account(&from).unwrap().nonce, 1);
@@ -292,11 +326,12 @@ mod tests {
         let state = StateDB::new();
         state.set_account(addr(1), funded(1_000_000));
         let pool = TransactionPool::new();
-        pool.add_transaction(transfer(addr(1), addr(2), 0), TxOrigin::Local)
+        pool.add_transaction(transfer(1, 2, 0), TxOrigin::Local)
             .unwrap();
         let exec = Executor::new(state);
+        let miner_key = miner_sk();
         let block = BlockProducer::new()
-            .produce_block(params(&g, &pool, &exec, &poa(), miner(), 2))
+            .produce_block(params(&g, &pool, &exec, &poa(), miner(), &miner_key, 2))
             .unwrap();
         let hash = store.insert_block(block).unwrap();
         assert_eq!(store.head(), Some(hash));

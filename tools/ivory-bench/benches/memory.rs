@@ -11,8 +11,9 @@
 use std::hint::black_box;
 
 use ivory_core::{Account, Transaction};
+use ivory_crypto::{keypair_from_byte, signed_tx};
 use ivory_executor::{ExecutionContext, Executor};
-use ivory_primitives::{Address, Bytes, Signature, U256};
+use ivory_primitives::{Address, Bytes, SecretKey, U256};
 use ivory_state::StateDB;
 use ivory_txpool::{PoolConfig, TransactionPool, TxOrigin};
 use memory_stats::memory_stats;
@@ -27,18 +28,31 @@ fn addr_n(n: u64) -> Address {
     Address::from_bytes(bytes)
 }
 
-fn transfer(from: Address, to: Address, nonce: u64, data: Bytes) -> Transaction {
+fn sender(seed: u8) -> (SecretKey, Address) {
+    let (sk, _, addr) = keypair_from_byte(seed);
+    (sk, addr)
+}
+
+fn from1() -> Address {
+    sender(1).1
+}
+
+fn to_addr() -> Address {
+    keypair_from_byte(2).2
+}
+
+fn tx_from_seed1(nonce: u64, data: Bytes) -> Transaction {
     let data_gas = (data.as_slice().len() as u64).saturating_mul(16);
-    Transaction {
-        from,
-        to: Some(to),
-        value: U256::from(1u64),
-        data,
-        gas_price: U256::ONE,
-        gas: 21_000u64.saturating_add(data_gas),
+    let (sk, _) = sender(1);
+    signed_tx(
+        &sk,
+        Some(to_addr()),
         nonce,
-        signature: Signature::zero(),
-    }
+        U256::from(1u64),
+        21_000u64.saturating_add(data_gas),
+        U256::ONE,
+        data,
+    )
 }
 
 fn funded(balance: u64) -> Account {
@@ -121,11 +135,9 @@ fn measure_pool(n: usize, data_len: usize) -> Row {
     let before = sample();
     let pool = pool_for(n);
     let data = Bytes::from_slice(&vec![0xcd; data_len]);
-    let from = addr_n(1);
-    let to = addr_n(2);
     for i in 0..n as u64 {
         // Clone payload each admit so pool owns distinct Bytes buffers.
-        let tx = transfer(from, to, i, Bytes::from_slice(data.as_slice()));
+        let tx = tx_from_seed1(i, Bytes::from_slice(data.as_slice()));
         pool.add_transaction(tx, TxOrigin::Local).expect("admit");
     }
     black_box(pool.pending_count());
@@ -144,11 +156,11 @@ fn measure_execute_block(n: usize) -> Row {
     let before = sample();
     let state = StateDB::new();
     let balance = (n as u64).saturating_mul(50_000).saturating_add(1_000_000);
-    state.set_account(addr_n(1), funded(balance));
+    state.set_account(from1(), funded(balance));
     let exec = Executor::new(state.clone());
     let mut ctx = ExecutionContext::new(1, 0);
     for i in 0..n as u64 {
-        let tx = transfer(addr_n(1), addr_n(2), i, Bytes::new());
+        let tx = tx_from_seed1(i, Bytes::new());
         exec.execute_transaction(&tx, &mut ctx).expect("execute");
     }
     black_box(ctx.gas_used);
@@ -167,14 +179,11 @@ fn measure_pipeline(n: usize) -> Row {
     let before = sample();
     let state = StateDB::new();
     let balance = (n as u64).saturating_mul(50_000).saturating_add(1_000_000);
-    state.set_account(addr_n(1), funded(balance));
+    state.set_account(from1(), funded(balance));
     let pool = pool_for(n);
     for i in 0..n as u64 {
-        pool.add_transaction(
-            transfer(addr_n(1), addr_n(2), i, Bytes::new()),
-            TxOrigin::Local,
-        )
-        .expect("admit");
+        pool.add_transaction(tx_from_seed1(i, Bytes::new()), TxOrigin::Local)
+            .expect("admit");
     }
     let mut pending = pool.get_pending(n);
     pending.sort_by_key(|t| t.nonce);
@@ -248,10 +257,7 @@ fn main() {
     println!(
         "profile: bench/release-class | heap_now={} | rss_now={} | peak_so_far={}",
         fmt_bytes(baseline.heap),
-        baseline
-            .rss
-            .map(fmt_bytes)
-            .unwrap_or_else(|| "n/a".into()),
+        baseline.rss.map(fmt_bytes).unwrap_or_else(|| "n/a".into()),
         fmt_bytes(PEAK.peak_usage())
     );
     println!("heap = peak_alloc current_usage delta; rss = process physical_mem delta");

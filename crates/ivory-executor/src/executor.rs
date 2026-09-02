@@ -49,6 +49,9 @@ impl Executor {
 
     /// Execute `tx` against `self.state`, updating `ctx.gas_used`.
     ///
+    /// Signature verification is performed at pool admission; the executor
+    /// trusts the caller (block producer / tests).
+    ///
     /// Missing sender/recipient accounts are treated as empty (`Account::new()`).
     /// Contract creation (`to: None`) does not derive an address; endowment stays
     /// uncredited (documented stub until CREATE semantics in #16).
@@ -149,7 +152,7 @@ impl Executor {
 #[cfg(test)]
 mod tests {
     use ivory_core::Account;
-    use ivory_primitives::{Address, Bytes, Signature, U256};
+    use ivory_primitives::{Address, Bytes, PublicKey, Signature, U256};
 
     use super::*;
     use crate::{CallKind, GasConfig};
@@ -182,6 +185,7 @@ mod tests {
             gas,
             nonce,
             signature: Signature::zero(),
+            public_key: PublicKey::zero(),
         }
     }
 
@@ -195,6 +199,7 @@ mod tests {
             gas,
             nonce,
             signature: Signature::zero(),
+            public_key: PublicKey::zero(),
         }
     }
 
@@ -289,6 +294,7 @@ mod tests {
             gas: 21_000,
             nonce: 0,
             signature: Signature::zero(),
+            public_key: PublicKey::zero(),
         };
         let mut ctx = ExecutionContext::new(1, 0);
         assert_eq!(
@@ -535,6 +541,7 @@ mod tests {
             gas: 21_000,
             nonce: 0,
             signature: Signature::zero(),
+            public_key: PublicKey::zero(),
         };
         let mut ctx = ExecutionContext::new(1, 0);
         assert_eq!(
