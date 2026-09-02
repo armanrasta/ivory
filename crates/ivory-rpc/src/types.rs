@@ -2,7 +2,7 @@
 
 //! RPC API types
 
-use ivory_primitives::{Address, H256, U256};
+use ivory_primitives::{Address, U256};
 use serde::{Deserialize, Serialize};
 
 /// Block number parameter

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use ivory_core::Account;
-use ivory_primitives::{Address, H256, U256};
+use ivory_primitives::{Address, Bytes, H256, U256};
 use parking_lot::RwLock;
 
 /// In-memory account and storage maps.
@@ -14,6 +14,7 @@ use parking_lot::RwLock;
 pub struct StateDB {
     accounts: Arc<RwLock<HashMap<Address, Account>>>,
     storage: Arc<RwLock<HashMap<(Address, H256), U256>>>,
+    code: Arc<RwLock<HashMap<Address, Bytes>>>,
 }
 
 impl Default for StateDB {
@@ -29,6 +30,7 @@ impl StateDB {
         Self {
             accounts: Arc::new(RwLock::new(HashMap::new())),
             storage: Arc::new(RwLock::new(HashMap::new())),
+            code: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -56,6 +58,21 @@ impl StateDB {
     /// Write a storage slot.
     pub fn set_storage(&self, addr: Address, slot: H256, value: U256) {
         self.storage.write().insert((addr, slot), value);
+    }
+
+    /// Contract bytecode for `addr` (empty if none).
+    #[must_use]
+    pub fn get_code(&self, addr: &Address) -> Vec<u8> {
+        self.code
+            .read()
+            .get(addr)
+            .map(|b| b.as_slice().to_vec())
+            .unwrap_or_default()
+    }
+
+    /// Store contract bytecode.
+    pub fn set_code(&self, addr: Address, code: Bytes) {
+        self.code.write().insert(addr, code);
     }
 
     /// Placeholder state root until a merkle-patricia trie is implemented (#22).

@@ -20,22 +20,23 @@ grpc = ["dep:tonic", "dep:prost"]
 ivory-primitives = { workspace = true }
 ivory-crypto = { workspace = true }
 ivory-core = { workspace = true }
+ivory-chain = { workspace = true }
+ivory-txpool = { workspace = true }
+ivory-state = { workspace = true }
+ivory-consensus = { workspace = true }
 
 # Async
 tokio = { workspace = true }
-async-trait = { workspace = true }
 futures = { workspace = true }
 
 # HTTP
 axum = { workspace = true }
-axum-extra = { workspace = true }
-tower = { workspace = true }
 tower-http = { workspace = true }
-hyper = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+bincode = { workspace = true }
 
 # Optional gRPC - note the "dep:" prefix for optional workspace deps
 tonic = { workspace = true, optional = true }

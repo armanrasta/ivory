@@ -2,36 +2,36 @@
 
 //! RPC errors
 
-use thiserror::Error;
 use crate::jsonrpc::JsonRpcError;
+use thiserror::Error;
 
 /// RPC errors
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum RpcError {
     /// Method not found
     #[error("method not found: {0}")]
     MethodNotFound(String),
-    
+
     /// Invalid parameters
     #[error("invalid params: {0}")]
     InvalidParams(String),
-    
+
     /// Internal error
     #[error("internal error: {0}")]
     Internal(String),
-    
+
     /// Server error
     #[error("server error: {0}")]
     Server(String),
-    
+
     /// Transaction not found
     #[error("transaction not found")]
     TransactionNotFound,
-    
+
     /// Block not found
     #[error("block not found")]
     BlockNotFound,
-    
+
     /// Account not found
     #[error("account not found")]
     AccountNotFound,
@@ -44,9 +44,13 @@ impl From<RpcError> for JsonRpcError {
             RpcError::InvalidParams(m) => JsonRpcError::invalid_params(&m),
             RpcError::Internal(m) => JsonRpcError::internal_error(&m),
             RpcError::Server(m) => JsonRpcError::internal_error(&m),
-            RpcError::TransactionNotFound => JsonRpcError::custom(-32000, "Transaction not found".to_string()),
+            RpcError::TransactionNotFound => {
+                JsonRpcError::custom(-32000, "Transaction not found".to_string())
+            }
             RpcError::BlockNotFound => JsonRpcError::custom(-32001, "Block not found".to_string()),
-            RpcError::AccountNotFound => JsonRpcError::custom(-32002, "Account not found".to_string()),
+            RpcError::AccountNotFound => {
+                JsonRpcError::custom(-32002, "Account not found".to_string())
+            }
         }
     }
 }
