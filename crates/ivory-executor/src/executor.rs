@@ -115,7 +115,7 @@ impl Executor {
         }
 
         let input = CallInput::from_tx(tx);
-        let call = execute_call(&input)?;
+        let call = execute_call(&input, &self.state)?;
 
         let refund_units = meter.refund_gas();
         let refund = U256::from(refund_units)
@@ -152,7 +152,7 @@ impl Executor {
 #[cfg(test)]
 mod tests {
     use ivory_core::Account;
-    use ivory_primitives::{Address, Bytes, PublicKey, Signature, U256};
+    use ivory_primitives::{Address, Bytes, H256, PublicKey, Signature, U256};
 
     use super::*;
     use crate::{CallKind, GasConfig};
@@ -493,7 +493,7 @@ mod tests {
     #[test]
     fn execute_call_stub_succeeds() {
         let tx = create_tx(addr(1), 0, 0, 21_016);
-        let result = execute_call(&CallInput::from_tx(&tx)).unwrap();
+        let result = execute_call(&CallInput::from_tx(&tx), &StateDB::new()).unwrap();
         assert!(result.success);
         assert!(result.logs.is_empty());
     }
@@ -568,5 +568,48 @@ mod tests {
         let ctx = ExecutionContext::new(0, 0);
         assert!(ctx.beneficiary.is_zero());
         assert_eq!(ctx.gas_used, 0);
+    }
+
+    #[test]
+    fn wasm_contract_call_sets_storage() {
+        let wasm = wat::parse_str(
+            r#"(module
+              (import "env" "storage_set" (func $set (param i32 i64)))
+              (func (export "call")
+                i32.const 2
+                i64.const 55
+                call $set
+              )
+            )"#,
+        )
+        .unwrap();
+        let state = StateDB::new();
+        state.set_account(addr(1), funded(0, 1_000_000));
+        state.set_code(addr(2), Bytes::from_vec(wasm));
+        let exec = Executor::new(state);
+        let mut ctx = ExecutionContext::new(1, 0);
+        let out = exec
+            .execute_transaction(&transfer_tx(addr(1), addr(2), 0, 0, 21_000, 1), &mut ctx)
+            .unwrap();
+        assert!(out.receipt.status);
+        let mut key = [0u8; 32];
+        key[31] = 2;
+        assert_eq!(
+            exec.state().get_storage(&addr(2), &H256::from_bytes(key)),
+            U256::from(55u64)
+        );
+    }
+
+    #[test]
+    fn invalid_contract_wasm_is_vm_error() {
+        let state = StateDB::new();
+        state.set_account(addr(1), funded(0, 1_000_000));
+        state.set_code(addr(2), Bytes::from_slice(&[0x00, 0x01, 0x02]));
+        let exec = Executor::new(state);
+        let mut ctx = ExecutionContext::new(1, 0);
+        assert!(matches!(
+            exec.execute_transaction(&transfer_tx(addr(1), addr(2), 0, 0, 21_000, 1), &mut ctx),
+            Err(ExecutionError::Vm(_))
+        ));
     }
 }

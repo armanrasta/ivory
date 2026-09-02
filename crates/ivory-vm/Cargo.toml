@@ -6,4 +6,9 @@ edition.workspace = true
 
 [dependencies]
 ivory-primitives = { workspace = true }
+ivory-state = { workspace = true }
 thiserror = { workspace = true }
+wasmi = { workspace = true }
+
+[dev-dependencies]
+wat = { workspace = true }

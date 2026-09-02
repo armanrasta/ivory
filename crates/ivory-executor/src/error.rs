@@ -25,4 +25,7 @@ pub enum ExecutionError {
     /// Cumulative block gas would exceed [`crate::GasConfig::max_gas_per_block`].
     #[error("block gas limit exceeded")]
     BlockGasLimitExceeded,
+    /// WASM load or execution failed.
+    #[error("vm: {0}")]
+    Vm(String),
 }

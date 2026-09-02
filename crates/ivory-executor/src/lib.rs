@@ -1,6 +1,6 @@
 //! # Ivory Executor
 //!
-//! Transaction execution, gas metering, and value transfers. WASM is stubbed until #7.
+//! Transaction execution, gas metering, and value transfers. WASM via wasmi.
 
 pub mod call;
 pub mod context;

@@ -8,8 +8,10 @@ edition.workspace = true
 ivory-primitives = { workspace = true }
 ivory-core = { workspace = true }
 ivory-state = { workspace = true }
+ivory-vm = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 ivory-txpool = { workspace = true }
 ivory-crypto = { workspace = true }
+wat = { workspace = true }
