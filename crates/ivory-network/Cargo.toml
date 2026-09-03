@@ -14,6 +14,8 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
 bincode = { workspace = true }
+# Pin transitive dep used by libp2p/hickory (see workspace note).
+tinyvec = { workspace = true }
 
 [dev-dependencies]
 ivory-crypto = { workspace = true }

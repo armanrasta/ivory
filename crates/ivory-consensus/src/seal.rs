@@ -61,12 +61,12 @@ pub fn decode_seals(extra_data: &Bytes) -> Result<Vec<Signature>, ConsensusError
     if bytes.is_empty() || !bytes.len().is_multiple_of(SEAL_LEN) {
         return Err(ConsensusError::InvalidSeal);
     }
-    let mut seals = Vec::with_capacity(bytes.len() / SEAL_LEN);
-    for chunk in bytes.chunks_exact(SEAL_LEN) {
-        let arr: [u8; SEAL_LEN] = chunk.try_into().map_err(|_| ConsensusError::InvalidSeal)?;
-        seals.push(Signature::from_bytes(arr));
-    }
-    Ok(seals)
+    Ok(bytes
+        .as_chunks::<SEAL_LEN>()
+        .0
+        .iter()
+        .map(|arr| Signature::from_bytes(*arr))
+        .collect())
 }
 
 /// Number of seals encoded in `extra_data`.
