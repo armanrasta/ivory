@@ -10,3 +10,5 @@ ivory-core = { workspace = true }
 ivory-crypto = { workspace = true }
 thiserror = { workspace = true }
 parking_lot = { workspace = true }
+serde = { workspace = true }
+bincode = { workspace = true }

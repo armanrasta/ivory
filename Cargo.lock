@@ -2205,10 +2205,12 @@ dependencies = [
 name = "ivory-state"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "ivory-core",
  "ivory-crypto",
  "ivory-primitives",
  "parking_lot",
+ "serde",
  "thiserror 1.0.69",
 ]
 
