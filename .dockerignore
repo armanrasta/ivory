@@ -1,0 +1,6 @@
+/target
+.git
+.cursor
+ivory-data
+**/__pycache__
+.venv

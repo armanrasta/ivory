@@ -1,0 +1,36 @@
+services:
+  validator:
+    build: .
+    environment:
+      NODE_ROLE: validator
+      DATA_DIR: /data
+    ports:
+      - "8545:8545"
+    volumes:
+      - validator-data:/data
+      - shared-genesis:/shared
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-H", "Content-Type: application/json", "-d", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_blockNumber\",\"params\":[]}", "http://127.0.0.1:8545/"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  follower:
+    build: .
+    environment:
+      NODE_ROLE: follower
+      DATA_DIR: /data
+      BOOTSTRAP: /dns4/validator/tcp/9000
+    ports:
+      - "8546:8545"
+    volumes:
+      - follower-data:/data
+      - shared-genesis:/shared
+    depends_on:
+      validator:
+        condition: service_healthy
+
+volumes:
+  validator-data:
+  follower-data:
+  shared-genesis:

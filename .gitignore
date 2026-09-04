@@ -4,3 +4,10 @@
 .cursor/
 *.lock
 !Cargo.lock
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+ivory-data/
+sdk/python/*.egg-info/
+sdk/python/pytest-cache-files-*/

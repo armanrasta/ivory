@@ -1,6 +1,6 @@
 # Ivory overview
 
-Ivory is a Rust blockchain workspace aimed at **permissioned ledgers** and, first, an immutable store for **Orbis decision receipts**.
+Ivory is a Rust workspace for a **permissioned** Proof-of-Authority chain: local `init`/`run`, gossip, JSON-RPC, WASM, and optional structured `tx.data`.
 
 ## Design choices (v1)
 
@@ -16,28 +16,28 @@ Ivory is a Rust blockchain workspace aimed at **permissioned ledgers** and, firs
 ## What works today
 
 - **Primitives** — hashes, addresses, `U256`, bytes, Ed25519-shaped signature types
-- **Crypto** — `sign` / `verify`, v1 address = last 20 bytes of `blake3(pubkey)` (domain may change in #16)
-- **Core** — `Account`, `BlockHeader`, `Transaction` (includes `public_key`), `Receipt`, `Log`; `Transaction::hash` hashes the full signed struct; `signing_hash` omits signature and public key
-- **State** — `StateDB` over `HashMap` (no real state root yet)
-- **Storage** — `RocksDbBackend` KV API
+- **Crypto** — `sign` / `verify`, address = last 20 bytes of `keccak256(ed25519_pubkey)`
+- **Core** — `Account`, `BlockHeader`, `Transaction`, `Receipt`, `Log`, `QuantEnvelope`; hashes are `keccak256(bincode(...))`; `signing_hash` omits signature and public key
+- **State** — `StateDB` over `HashMap` (no real state root yet; `0x0` until #22)
+- **Storage** — `RocksDbBackend` KV API; node persists canonical blocks under `--data-dir/chain`
 - **Tx pool** — Ed25519 verify on admit, strict contiguous nonces (`ivory-txpool`)
-- **Executor** — transfers, intrinsic gas, refunds; WASM via `ivory-vm` when the recipient has code
-- **VM** — wasmi with `env.storage_get` / `env.storage_set` host stubs
+- **Executor** — transfers, CREATE, intrinsic gas, refunds; WASM via `ivory-vm` when the recipient has code
+- **VM** — wasmi with fuel, `env.storage_get` / `env.storage_set` / `env.emit_log`
 - **Consensus** — PoA validator set; each seal is an Ed25519 signature over the header hash with empty `extra_data`
 - **Chain** — in-memory `BlockStore`, longest-chain reorgs, `BlockProducer` (`ivory-chain`)
 - **Network** — gossipsub topics `ivory/blocks/1`, `ivory/txs/1`; `ivory/sync/1` for `GetBlock`
-- **RPC** — `eth_chainId`, `eth_blockNumber`, `eth_getBalance`, `eth_getBlockByNumber` / `ByHash`, `eth_sendRawTransaction`, `eth_getTransactionByHash` (and a few extra getters). Unknown methods return JSON-RPC `-32601`
-- **Node** — `ivory init` writes genesis/config/key; `ivory run` wires store + pool + producer + network + HTTP on `:8545`
+- **RPC** — `eth_*` subset over HTTP; `eth_sendRawTransaction` gossips after admit. Unknown methods return JSON-RPC `-32601`
+- **Node** — `ivory init` / `ivory run`; restart reloads RocksDB; two-node smoke in `bin/ivory/tests/two_node.rs`
 
-Header hashing is currently **bincode + blake3** (placeholder until RLP/keccak). `eth_sendRawTransaction` takes hex of bincode `Transaction` until #16.
+Header hashing is **bincode + keccak256**. Wire encoding stays bincode (not RLP). See [protocol.md](protocol.md).
 
-## Benchmarks
+## Docs
 
-Hot-path Criterion results (hash, state, pool, execute, pipeline): [benchmarks.md](benchmarks.md).
+- [architecture.md](architecture.md) · [rpc.md](rpc.md) · [protocol.md](protocol.md) · [quant-envelope.md](quant-envelope.md) · [deploy.md](deploy.md)
 
 ## What is next
 
-See [issue #24](https://github.com/armanrasta/ivory/issues/24): Merkle trie (#22), quant envelope (#27), Orbis SDK (#13), Docker/testnet (#17), protocol hash migration (#16).
+See [issue #24](https://github.com/armanrasta/ivory/issues/24): Merkle trie (#22), coverage/metrics, light client. Testnet compose is in-tree (`docker-compose.yml`).
 
 ## Crate dependency sketch
 
