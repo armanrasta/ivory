@@ -3,11 +3,61 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use ivory_consensus::{PoAConfig, Validator};
 use ivory_crypto::secret_from_bytes;
 use ivory_primitives::{Address, PublicKey, SecretKey, U256};
 use serde::{Deserialize, Serialize};
+
+/// Operator role: master may produce; slave only follows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ServerRole {
+    /// Produce blocks when this key is the genesis validator.
+    #[default]
+    Master,
+    /// Never produce; sync via `bootstrap` when set.
+    Slave,
+}
+
+impl ServerRole {
+    /// Parse `master` / `slave` and operator aliases.
+    ///
+    /// # Errors
+    ///
+    /// Unknown role string.
+    pub fn parse(s: &str) -> Result<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "master" | "validator" | "producer" => Ok(Self::Master),
+            "slave" | "follower" => Ok(Self::Slave),
+            other => bail!("unknown role {other} (use master or slave)"),
+        }
+    }
+
+    /// Wire string for `config.toml`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Master => "master",
+            Self::Slave => "slave",
+        }
+    }
+
+    /// Whether this process is allowed to seal blocks.
+    #[must_use]
+    pub const fn may_produce(self) -> bool {
+        matches!(self, Self::Master)
+    }
+}
+
+/// Options for [`init_datadir_with`].
+#[derive(Clone, Debug, Default)]
+pub struct InitOpts {
+    /// Written as `role` in `config.toml`.
+    pub role: ServerRole,
+    /// Written as `bootstrap` in `config.toml`.
+    pub bootstrap: Vec<String>,
+}
 
 /// On-disk node config (`config.toml`).
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -23,6 +73,12 @@ pub struct NodeFileConfig {
     pub bootstrap: Vec<String>,
     /// Block production interval in milliseconds.
     pub block_interval_ms: u64,
+    /// Extra directory of YAML/WAT/WASM contract packages (optional).
+    #[serde(default)]
+    pub contracts_dir: String,
+    /// `master` produces (if authorized); `slave` never produces.
+    #[serde(default)]
+    pub role: ServerRole,
 }
 
 impl Default for NodeFileConfig {
@@ -33,6 +89,8 @@ impl Default for NodeFileConfig {
             p2p_listen: "/ip4/127.0.0.1/tcp/0".into(),
             bootstrap: Vec::new(),
             block_interval_ms: 2_000,
+            contracts_dir: String::new(),
+            role: ServerRole::Master,
         }
     }
 }
@@ -149,6 +207,8 @@ pub struct DataPaths {
     pub validator_key: PathBuf,
     /// RocksDB directory for canonical blocks.
     pub chain: PathBuf,
+    /// Installed contract YAML / WAT / WASM.
+    pub contracts: PathBuf,
 }
 
 impl DataPaths {
@@ -160,6 +220,7 @@ impl DataPaths {
             genesis: root.join("genesis.json"),
             validator_key: root.join("validator.key"),
             chain: root.join("chain"),
+            contracts: root.join("contracts"),
             root,
         }
     }
@@ -171,6 +232,15 @@ impl DataPaths {
 ///
 /// IO or serialization errors.
 pub fn init_datadir(root: &Path) -> Result<DataPaths> {
+    init_datadir_with(root, InitOpts::default())
+}
+
+/// [`init_datadir`] with role and bootstrap.
+///
+/// # Errors
+///
+/// IO or serialization errors.
+pub fn init_datadir_with(root: &Path, opts: InitOpts) -> Result<DataPaths> {
     std::fs::create_dir_all(root).with_context(|| format!("mkdir {}", root.display()))?;
     let paths = DataPaths::new(root.to_path_buf());
     let (sk, pk, addr) = ivory_crypto::generate_keypair();
@@ -204,12 +274,16 @@ pub fn init_datadir(root: &Path) -> Result<DataPaths> {
         &paths.genesis,
         serde_json::to_string_pretty(&genesis)? + "\n",
     )?;
-    std::fs::write(
-        &paths.config,
-        toml::to_string_pretty(&NodeFileConfig::default())?,
-    )?;
+    let cfg = NodeFileConfig {
+        role: opts.role,
+        bootstrap: opts.bootstrap,
+        ..NodeFileConfig::default()
+    };
+    std::fs::write(&paths.config, toml::to_string_pretty(&cfg)?)?;
     std::fs::create_dir_all(&paths.chain)
         .with_context(|| format!("mkdir {}", paths.chain.display()))?;
+    std::fs::create_dir_all(&paths.contracts)
+        .with_context(|| format!("mkdir {}", paths.contracts.display()))?;
     Ok(paths)
 }
 

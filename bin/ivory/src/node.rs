@@ -15,7 +15,7 @@ use ivory_network::{
     Multiaddr, NetworkConfig, NetworkEvent, NetworkHandle, start as start_network,
 };
 use ivory_primitives::{Address, Bytes, H256, SecretKey, U256};
-use ivory_rpc::{RpcContext, RpcHandler, router};
+use ivory_rpc::{NodeRole, RpcContext, RpcHandler, router};
 use ivory_state::StateDB;
 use ivory_txpool::{TransactionPool, TxOrigin};
 use tokio::net::TcpListener;
@@ -70,7 +70,8 @@ pub async fn run_node(
     let local_addr = address_from_secret(&validator_key);
     let validator_addr =
         Address::from_hex(&genesis.validator.address).context("genesis validator address")?;
-    let is_producer = local_addr == validator_addr && poa.is_validator(&local_addr);
+    let is_producer =
+        cfg.role.may_produce() && local_addr == validator_addr && poa.is_validator(&local_addr);
 
     let state = StateDB::new();
     for (addr, bal) in genesis.parsed_alloc()? {
@@ -119,12 +120,35 @@ pub async fn run_node(
     let (network, mut events) = start_network(net_cfg).await?;
 
     let gossip_net = network.clone();
+    let role = if is_producer {
+        NodeRole::Producer
+    } else {
+        NodeRole::Follower
+    };
     let handler = RpcHandler::new(
-        RpcContext::new(Arc::clone(&store), Arc::clone(&pool), state, cfg.chain_id).with_gossip(
-            move |tx| {
+        RpcContext::new(Arc::clone(&store), Arc::clone(&pool), state, cfg.chain_id)
+            .with_gossip(move |tx| {
                 let _ = gossip_net.broadcast_transaction(tx);
-            },
-        ),
+            })
+            .with_node_info(
+                role,
+                local_addr,
+                network.peer_id().to_string(),
+                network.peer_count_handle(),
+                cfg.bootstrap.clone(),
+            )
+            .with_contract_lookup({
+                let data_contracts = paths.contracts.clone();
+                let extra = if cfg.contracts_dir.is_empty() {
+                    None
+                } else {
+                    Some(std::path::PathBuf::from(&cfg.contracts_dir))
+                };
+                move |hash| {
+                    let dirs = crate::contract::catalog_dirs(&data_contracts, extra.as_deref());
+                    crate::contract::load_catalog(&dirs).get(hash).cloned()
+                }
+            }),
     );
 
     let rpc_bind: SocketAddr = cfg.rpc_addr.parse().context("rpc addr")?;

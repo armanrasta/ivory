@@ -1,0 +1,4 @@
+name: tracker
+schema: app.v1
+description: Writes a marker into contract storage so the ledger can show a live record.
+source: tracker.wat

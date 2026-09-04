@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use ivory_crypto::signed_transfer;
-use ivory_node::{init_datadir, load_datadir, run_node};
+use ivory_node::{ServerRole, init_datadir, load_datadir, run_node};
 use ivory_primitives::U256;
 use serde_json::json;
 use tokio::sync::watch;
@@ -34,6 +34,7 @@ async fn follower_imports_transfer_and_matches_balance() {
     cfg_b.rpc_addr = "127.0.0.1:0".into();
     cfg_b.p2p_listen = "/ip4/127.0.0.1/tcp/0".into();
     cfg_b.block_interval_ms = 5_000;
+    cfg_b.role = ServerRole::Slave;
     cfg_b.bootstrap = vec![node_a.p2p_addr.to_string()];
 
     let (_sh_b, rx_b) = watch::channel(false);
