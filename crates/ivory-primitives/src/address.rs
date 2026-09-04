@@ -359,6 +359,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_eip55_published_fixture() {
+        let addr = Address::from_hex("0xfb6916095ca1df60bb79ce92ce3ea74c37c5d359").unwrap();
+        assert_eq!(
+            addr.to_hex_checksummed(),
+            "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359"
+        );
+    }
+
+    #[test]
+    fn test_address_create2() {
+        let sender = Address::from_hex("0x742d35cc6634c0532925a3b844bc9e7595f5ab21").unwrap();
+        let salt = H256::ZERO;
+        let code_hash = crate::keccak256(b"ivory-create2");
+        let a = Address::create2(&sender, &salt, &code_hash);
+        let b = Address::create2(&sender, &H256::from_bytes([1u8; 32]), &code_hash);
+        assert_ne!(a, b);
+        assert!(!a.is_zero());
+    }
+
     #[cfg(feature = "serde")]
     #[test]
     fn test_address_serde() {

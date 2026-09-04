@@ -10,6 +10,20 @@ fn keccak_bincode<T: Serialize>(value: &T) -> H256 {
     keccak256(&encoded)
 }
 
+/// `keccak256(bincode(items))` — transactions and receipts list roots.
+///
+/// An empty list is a non-zero hash (bincode of `Vec` length 0), not [`H256::ZERO`].
+#[must_use]
+pub fn list_root<T: Serialize>(items: &[T]) -> H256 {
+    keccak_bincode(&items)
+}
+
+/// Empty transaction-list and receipt-list roots (same empty-`Vec` bincode).
+#[must_use]
+pub fn empty_list_roots() -> (H256, H256) {
+    (list_root::<Transaction>(&[]), list_root::<Receipt>(&[]))
+}
+
 /// Block header fields committed by consensus.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct BlockHeader {
@@ -27,9 +41,9 @@ pub struct BlockHeader {
     pub gas_used: u64,
     /// Merkle root of the state trie.
     pub state_root: H256,
-    /// Merkle root of the transaction trie.
+    /// `list_root` of the block’s transactions (not a Patricia trie).
     pub transactions_root: H256,
-    /// Merkle root of the receipts trie.
+    /// `list_root` of the block’s receipts (not a Patricia trie).
     pub receipts_root: H256,
     /// Difficulty (unused for PoA; retained for header compatibility).
     pub difficulty: U256,
@@ -168,10 +182,20 @@ impl Block {
     ///
     /// # Errors
     ///
-    /// Returns [`BlockError::GasExceeded`] when `gas_used` is greater than `gas_limit`.
+    /// [`BlockError::GasExceeded`] when `gas_used` is greater than `gas_limit`.
+    /// Root and length mismatches for the transaction / receipt lists.
     pub fn validate(&self) -> Result<(), BlockError> {
         if self.header.gas_used > self.header.gas_limit {
             return Err(BlockError::GasExceeded);
+        }
+        if self.transactions.len() != self.receipts.len() {
+            return Err(BlockError::TxReceiptCountMismatch);
+        }
+        if self.header.transactions_root != list_root(&self.transactions) {
+            return Err(BlockError::InvalidTransactionsRoot);
+        }
+        if self.header.receipts_root != list_root(&self.receipts) {
+            return Err(BlockError::InvalidReceiptsRoot);
         }
         Ok(())
     }
@@ -182,6 +206,7 @@ mod tests {
     use super::*;
 
     fn test_header(gas_limit: u64, gas_used: u64) -> BlockHeader {
+        let (tx_root, rx_root) = empty_list_roots();
         BlockHeader {
             number: 1,
             parent_hash: H256::ZERO,
@@ -190,8 +215,8 @@ mod tests {
             gas_limit,
             gas_used,
             state_root: H256::ZERO,
-            transactions_root: H256::ZERO,
-            receipts_root: H256::ZERO,
+            transactions_root: tx_root,
+            receipts_root: rx_root,
             difficulty: U256::ZERO,
             extra_data: Bytes::new(),
         }
@@ -390,5 +415,65 @@ mod tests {
             BlockError::GasExceeded.to_string(),
             "gas used exceeds limit"
         );
+    }
+
+    #[test]
+    fn empty_list_roots_are_nonzero() {
+        let (tx, rx) = empty_list_roots();
+        assert_ne!(tx, H256::ZERO);
+        assert_ne!(rx, H256::ZERO);
+        assert_eq!(tx, list_root::<Transaction>(&[]));
+        assert_eq!(rx, list_root::<Receipt>(&[]));
+    }
+
+    #[test]
+    fn list_root_order_sensitive() {
+        let a = test_tx(Some(Address::from_bytes([1u8; 20])));
+        let mut b = test_tx(Some(Address::from_bytes([2u8; 20])));
+        b.nonce = 1;
+        assert_ne!(list_root(&[a.clone(), b.clone()]), list_root(&[b, a]));
+    }
+
+    #[test]
+    fn validate_rejects_wrong_tx_root() {
+        let mut block = empty_block();
+        block.header.transactions_root = H256::ZERO;
+        assert_eq!(block.validate(), Err(BlockError::InvalidTransactionsRoot));
+    }
+
+    #[test]
+    fn validate_rejects_wrong_receipt_root() {
+        let mut block = empty_block();
+        block.header.receipts_root = H256::ZERO;
+        assert_eq!(block.validate(), Err(BlockError::InvalidReceiptsRoot));
+    }
+
+    #[test]
+    fn validate_rejects_count_mismatch() {
+        let mut block = empty_block();
+        block.transactions.push(test_tx(None));
+        block.header.transactions_root = list_root(&block.transactions);
+        assert_eq!(block.validate(), Err(BlockError::TxReceiptCountMismatch));
+    }
+
+    #[test]
+    fn validate_accepts_matching_body_roots() {
+        let tx = test_tx(None);
+        let receipt = Receipt {
+            tx_hash: tx.hash(),
+            block_number: 1,
+            gas_used: 21_000,
+            status: true,
+            logs: Vec::new(),
+        };
+        let mut header = test_header(30_000_000, 21_000);
+        header.transactions_root = list_root(std::slice::from_ref(&tx));
+        header.receipts_root = list_root(std::slice::from_ref(&receipt));
+        let block = Block {
+            header,
+            transactions: vec![tx],
+            receipts: vec![receipt],
+        };
+        assert!(block.validate().is_ok());
     }
 }

@@ -11,4 +11,5 @@ bincode = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+ivory-crypto = { workspace = true }
 serde_json = { workspace = true }

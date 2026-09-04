@@ -82,9 +82,9 @@ fn txs_on_path(store: &BlockStore, tip: H256) -> Vec<Transaction> {
 #[cfg(test)]
 mod tests {
     use ivory_consensus::{ConsensusEngine, PoAConsensus};
-    use ivory_core::{Account, Block, BlockHeader};
+    use ivory_core::{Account, Block, BlockHeader, empty_list_roots};
     use ivory_crypto::{keypair_from_byte, signed_transfer};
-    use ivory_primitives::{Address, Bytes, SecretKey, U256};
+    use ivory_primitives::{Address, Bytes, H256, SecretKey, U256};
     use ivory_state::StateDB;
 
     use super::*;
@@ -114,6 +114,7 @@ mod tests {
     }
 
     fn genesis(state: &StateDB) -> Block {
+        let (tx_root, rx_root) = empty_list_roots();
         let mut header = BlockHeader {
             number: 0,
             parent_hash: H256::ZERO,
@@ -122,8 +123,8 @@ mod tests {
             gas_limit: 30_000_000,
             gas_used: 0,
             state_root: state.root_hash(),
-            transactions_root: H256::ZERO,
-            receipts_root: H256::ZERO,
+            transactions_root: tx_root,
+            receipts_root: rx_root,
             difficulty: U256::ZERO,
             extra_data: Bytes::new(),
         };

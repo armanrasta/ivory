@@ -17,4 +17,13 @@ pub enum BlockError {
     /// Quant envelope in `tx.data` failed structural validation.
     #[error("invalid quant envelope: {0}")]
     InvalidQuantEnvelope(&'static str),
+    /// Header `transactions_root` does not match `list_root(transactions)`.
+    #[error("invalid transactions root")]
+    InvalidTransactionsRoot,
+    /// Header `receipts_root` does not match `list_root(receipts)`.
+    #[error("invalid receipts root")]
+    InvalidReceiptsRoot,
+    /// Transaction and receipt lists have different lengths.
+    #[error("transaction/receipt count mismatch")]
+    TxReceiptCountMismatch,
 }

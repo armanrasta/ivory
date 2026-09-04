@@ -1,9 +1,9 @@
 //! Assemble a block from the mempool and executor.
 
 use ivory_consensus::{ConsensusEngine, PoAConsensus};
-use ivory_core::{Block, BlockHeader, Receipt, Transaction};
+use ivory_core::{Block, BlockHeader, Receipt, Transaction, list_root};
 use ivory_executor::{ExecutionContext, Executor, GasConfig};
-use ivory_primitives::{Address, H256, SecretKey, U256};
+use ivory_primitives::{Address, SecretKey, U256};
 use ivory_txpool::TransactionPool;
 
 use crate::error::ChainError;
@@ -99,8 +99,8 @@ impl BlockProducer {
             gas_limit: self.gas_limit,
             gas_used: ctx.gas_used,
             state_root: executor.state().root_hash(),
-            transactions_root: H256::ZERO,
-            receipts_root: H256::ZERO,
+            transactions_root: list_root(&included),
+            receipts_root: list_root(&receipts),
             difficulty: U256::ZERO,
             extra_data: ivory_primitives::Bytes::new(),
         };
@@ -117,7 +117,7 @@ impl BlockProducer {
 #[cfg(test)]
 mod tests {
     use ivory_consensus::{ConsensusEngine, PoAConsensus};
-    use ivory_core::{Account, Block, BlockHeader};
+    use ivory_core::{Account, Block, BlockHeader, empty_list_roots};
     use ivory_crypto::{keypair_from_byte, signed_transfer, signed_tx};
     use ivory_primitives::{Address, Bytes, H256, SecretKey, U256};
     use ivory_state::StateDB;
@@ -143,6 +143,7 @@ mod tests {
     }
 
     fn genesis_block() -> Block {
+        let (tx_root, rx_root) = empty_list_roots();
         let mut header = BlockHeader {
             number: 0,
             parent_hash: H256::ZERO,
@@ -151,8 +152,8 @@ mod tests {
             gas_limit: 30_000_000,
             gas_used: 0,
             state_root: H256::ZERO,
-            transactions_root: H256::ZERO,
-            receipts_root: H256::ZERO,
+            transactions_root: tx_root,
+            receipts_root: rx_root,
             difficulty: U256::ZERO,
             extra_data: Bytes::new(),
         };
@@ -333,9 +334,36 @@ mod tests {
         let block = BlockProducer::new()
             .produce_block(params(&g, &pool, &exec, &poa(), miner(), &miner_key, 2))
             .unwrap();
+        assert_ne!(block.hash(), H256::ZERO);
+        assert_ne!(block.transactions[0].hash(), H256::ZERO);
+        assert_eq!(block.header.difficulty, U256::ZERO);
         let hash = store.insert_block(block).unwrap().hash;
         assert_eq!(store.head(), Some(hash));
         store.record_state(hash, exec.state().clone());
         assert!(store.state_at(&hash).is_some());
+    }
+
+    #[test]
+    fn reject_produced_then_mutated_body() {
+        let store = BlockStore::new(poa());
+        let g = genesis_block();
+        store.insert_genesis(g.clone()).unwrap();
+        let state = StateDB::new();
+        state.set_account(addr(1), funded(1_000_000));
+        let pool = TransactionPool::new();
+        pool.add_transaction(transfer(1, 2, 0), TxOrigin::Local)
+            .unwrap();
+        let exec = Executor::new(state);
+        let miner_key = miner_sk();
+        let mut block = BlockProducer::new()
+            .produce_block(params(&g, &pool, &exec, &poa(), miner(), &miner_key, 2))
+            .unwrap();
+        block.transactions[0] = transfer(1, 3, 0);
+        assert_eq!(
+            store.insert_block(block),
+            Err(crate::error::ChainError::Block(
+                ivory_core::BlockError::InvalidTransactionsRoot
+            ))
+        );
     }
 }
