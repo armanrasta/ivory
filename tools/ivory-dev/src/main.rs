@@ -48,6 +48,26 @@ enum Commands {
         #[arg(long)]
         chain: Option<String>,
     },
+    /// Sign a transfer from `validator.key` (local faucet; never a web service).
+    Faucet {
+        /// Recipient address hex.
+        #[arg(long)]
+        to: String,
+        /// Amount in wei (decimal).
+        #[arg(long)]
+        amount: String,
+        #[arg(long)]
+        rpc: Option<String>,
+        /// `local` or `public` (`IVORY_PUBLIC_RPC`).
+        #[arg(long)]
+        chain: Option<String>,
+        /// Ed25519 secret hex file (defaults to `--data-dir/validator.key`).
+        #[arg(long)]
+        key: Option<PathBuf>,
+        /// Server data-dir (uses `validator.key`).
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -106,8 +126,58 @@ fn main() -> Result<()> {
                 Err(e) => println!("ivory_nodeInfo unavailable: {e}"),
             }
         }
+        Commands::Faucet {
+            to,
+            amount,
+            rpc,
+            chain,
+            key,
+            data_dir,
+        } => {
+            let cwd = std::env::current_dir()?;
+            let project = find_project(&cwd).unwrap_or(cwd);
+            let cfg = load_dev_config(&project)?;
+            let chain = chain.as_deref().map(ChainTarget::parse).transpose()?;
+            let rpc_url = resolve_rpc(rpc.as_deref(), chain, &cfg)?;
+            let key_path = resolve_key_path(key.as_deref(), data_dir.as_deref(), &project, &cfg)?;
+            let sk = load_secret_key(&key_path)
+                .with_context(|| format!("load key {}", key_path.display()))?;
+            let to = ivory_primitives::Address::from_hex(&to).context("--to address")?;
+            let amount = parse_amount(&amount)?;
+            let from = ivory_crypto::address_from_secret(&sk);
+            let nonce_hex = rpc_call(
+                &rpc_url,
+                "eth_getTransactionCount",
+                json!([from.to_hex(), "latest"]),
+            )?;
+            let nonce = parse_qty(&nonce_hex)?;
+            let tx = ivory_crypto::signed_transfer(&sk, to, nonce, amount, 21_000);
+            let raw = format!("0x{}", hex::encode(bincode::serialize(&tx)?));
+            let hash = rpc_call(&rpc_url, "eth_sendRawTransaction", json!([raw]))?;
+            println!("{hash}");
+        }
     }
     Ok(())
+}
+
+fn parse_amount(s: &str) -> Result<ivory_primitives::U256> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        ivory_primitives::U256::from_hex(&format!("0x{hex}")).context("amount hex")
+    } else {
+        s.parse::<u128>()
+            .map(ivory_primitives::U256::from_u128)
+            .context("amount decimal wei")
+    }
+}
+
+fn parse_qty(v: &Value) -> Result<u64> {
+    let s = v.as_str().context("qty string")?;
+    let stripped = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s);
+    u64::from_str_radix(stripped, 16).context("qty hex")
 }
 
 fn rpc_call(url: &str, method: &str, params: Value) -> Result<Value> {

@@ -204,9 +204,19 @@ mod tests {
     #[test]
     fn public_chain_requires_env() {
         let cfg = DevConfig::default();
-        // May pass if the environment already has the var; only assert the error path when unset.
-        if std::env::var("IVORY_PUBLIC_RPC").is_err() {
-            assert!(resolve_rpc(None, Some(ChainTarget::Public), &cfg).is_err());
+        let prev = std::env::var("IVORY_PUBLIC_RPC").ok();
+        unsafe {
+            std::env::remove_var("IVORY_PUBLIC_RPC");
+        }
+        let err = resolve_rpc(None, Some(ChainTarget::Public), &cfg).unwrap_err();
+        assert!(err.to_string().contains("IVORY_PUBLIC_RPC"), "{err}");
+        match prev {
+            Some(v) => unsafe {
+                std::env::set_var("IVORY_PUBLIC_RPC", v);
+            },
+            None => unsafe {
+                std::env::remove_var("IVORY_PUBLIC_RPC");
+            },
         }
     }
 }

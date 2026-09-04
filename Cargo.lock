@@ -2087,6 +2087,7 @@ name = "ivory-core"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "ivory-crypto",
  "ivory-primitives",
  "serde",
  "serde_json",
@@ -2109,8 +2110,12 @@ name = "ivory-dev"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "clap",
+ "hex",
  "ivory",
+ "ivory-crypto",
+ "ivory-primitives",
  "serde",
  "serde_json",
  "tempfile",
