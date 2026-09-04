@@ -1,0 +1,108 @@
+{{- if gt (int .Values.slave.replicaCount) 0 }}
+{{- if not .Values.genesis }}
+{{- fail "slave.replicaCount > 0 requires values.genesis (helm upgrade --set-file genesis=./genesis.json)" }}
+{{- end }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "ivory.fullname" . }}-slave
+  labels:
+    {{- include "ivory.labels" . | nindent 4 }}
+    ivory.io/role: slave
+spec:
+  serviceName: {{ include "ivory.fullname" . }}-p2p
+  replicas: {{ .Values.slave.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "ivory.selectorLabels" . | nindent 6 }}
+      ivory.io/role: slave
+  template:
+    metadata:
+      labels:
+        {{- include "ivory.selectorLabels" . | nindent 8 }}
+        ivory.io/role: slave
+        ivory.io/rpc: "true"
+        ivory.io/p2p: "true"
+    spec:
+      serviceAccountName: {{ include "ivory.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "ivory.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: ivory
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- include "ivory.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: NODE_ROLE
+              value: slave
+            - name: DATA_DIR
+              value: /data
+            - name: RPC_ADDR
+              value: 0.0.0.0:{{ .Values.rpc.servicePort }}
+            - name: P2P_LISTEN
+              value: /ip4/0.0.0.0/tcp/{{ .Values.p2p.port }}
+            - name: BOOTSTRAP
+              value: {{ include "ivory.p2pBootstrap" . | quote }}
+            - name: GENESIS_FILE
+              value: /genesis/genesis.json
+            {{- if .Values.rpc.cors }}
+            - name: IVORY_CORS
+              value: {{ .Values.rpc.cors | quote }}
+            {{- end }}
+            {{- if .Values.rpc.token }}
+            - name: IVORY_RPC_TOKEN_FILE
+              value: /var/run/ivory/rpc-token
+            {{- end }}
+          ports:
+            - name: rpc
+              containerPort: {{ .Values.rpc.servicePort }}
+            - name: p2p
+              containerPort: {{ .Values.p2p.port }}
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: rpc
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: rpc
+          resources:
+            {{- toYaml .Values.slave.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: genesis
+              mountPath: /genesis
+              readOnly: true
+            {{- if .Values.rpc.token }}
+            - name: secrets
+              mountPath: /var/run/ivory
+              readOnly: true
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: genesis
+          configMap:
+            name: {{ include "ivory.fullname" . }}-genesis
+        {{- if .Values.rpc.token }}
+        - name: secrets
+          secret:
+            secretName: {{ include "ivory.fullname" . }}
+        {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.slave.persistence.storageClass }}
+        storageClassName: {{ .Values.slave.persistence.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.slave.persistence.size }}
+{{- end }}

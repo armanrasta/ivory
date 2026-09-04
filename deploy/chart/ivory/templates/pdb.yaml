@@ -1,0 +1,14 @@
+{{- if gt (int .Values.slave.replicaCount) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "ivory.fullname" . }}-slave
+  labels:
+    {{- include "ivory.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "ivory.selectorLabels" . | nindent 6 }}
+      ivory.io/role: slave
+{{- end }}

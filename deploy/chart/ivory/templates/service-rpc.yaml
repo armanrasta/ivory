@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ivory.fullname" . }}-rpc
+  labels:
+    {{- include "ivory.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: rpc
+      port: {{ .Values.rpc.servicePort }}
+      targetPort: rpc
+  selector:
+    {{- include "ivory.selectorLabels" . | nindent 4 }}
+    ivory.io/rpc: "true"

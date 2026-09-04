@@ -1,0 +1,80 @@
+# Image built from the repo Dockerfile. No public registry is assumed.
+image:
+  repository: ivory
+  tag: latest
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+rpc:
+  # Optional bearer token for POST / and /ui. Probes stay open.
+  token: ""
+  # Empty = no CORS. "*" for local /ui. Comma-separated origins otherwise.
+  cors: ""
+  servicePort: 8545
+
+p2p:
+  port: 9000
+
+# Genesis JSON (required when slave.replicaCount > 0).
+# helm upgrade --set-file genesis=./genesis.json
+genesis: ""
+
+# Optional hex Ed25519 secret. Without it, master runs ivory init on an empty PVC.
+validatorKey: ""
+
+master:
+  enabled: true
+  persistence:
+    size: 10Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+slave:
+  # 0 on first install (master writes genesis). Then helm upgrade --set-file genesis=...
+  replicaCount: 0
+  persistence:
+    size: 10Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+ingress:
+  enabled: false
+  className: nginx
+  host: ""
+  tls: true
+  certManagerIssuer: ""
+
+networkPolicy:
+  enabled: true
+  # Extra RPC peers (ingress controller). Kube-system + ivory.io/rpc-client pods are also allowed.
+  rpcFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+  # Node CIDRs so kubelet HTTP probes are not dropped (empty if the CNI exempts them).
+  kubeletCidrs: []
+
+podSecurity:
+  runAsUser: 65532
+  fsGroup: 65532
+
+pdb:
+  minAvailable: 1

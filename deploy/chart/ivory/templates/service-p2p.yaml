@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ivory.fullname" . }}-p2p
+  labels:
+    {{- include "ivory.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - name: p2p
+      port: {{ .Values.p2p.port }}
+      targetPort: p2p
+  selector:
+    {{- include "ivory.selectorLabels" . | nindent 4 }}
+    ivory.io/p2p: "true"

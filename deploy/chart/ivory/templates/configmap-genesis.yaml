@@ -1,0 +1,11 @@
+{{- if .Values.genesis }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ivory.fullname" . }}-genesis
+  labels:
+    {{- include "ivory.labels" . | nindent 4 }}
+data:
+  genesis.json: |
+{{ .Values.genesis | indent 4 }}
+{{- end }}

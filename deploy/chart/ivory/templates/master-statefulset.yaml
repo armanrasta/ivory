@@ -1,0 +1,117 @@
+{{- if .Values.master.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "ivory.fullname" . }}-master
+  labels:
+    {{- include "ivory.labels" . | nindent 4 }}
+    ivory.io/role: master
+spec:
+  serviceName: {{ include "ivory.fullname" . }}-p2p
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ivory.selectorLabels" . | nindent 6 }}
+      ivory.io/role: master
+  template:
+    metadata:
+      labels:
+        {{- include "ivory.selectorLabels" . | nindent 8 }}
+        ivory.io/role: master
+        ivory.io/rpc: "true"
+        ivory.io/p2p: "true"
+    spec:
+      serviceAccountName: {{ include "ivory.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "ivory.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: ivory
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- include "ivory.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: NODE_ROLE
+              value: master
+            - name: DATA_DIR
+              value: /data
+            - name: RPC_ADDR
+              value: 0.0.0.0:{{ .Values.rpc.servicePort }}
+            - name: P2P_LISTEN
+              value: /ip4/0.0.0.0/tcp/{{ .Values.p2p.port }}
+            {{- if .Values.rpc.cors }}
+            - name: IVORY_CORS
+              value: {{ .Values.rpc.cors | quote }}
+            {{- end }}
+            {{- if .Values.rpc.token }}
+            - name: IVORY_RPC_TOKEN_FILE
+              value: /var/run/ivory/rpc-token
+            {{- end }}
+            {{- if .Values.validatorKey }}
+            - name: VALIDATOR_KEY_FILE
+              value: /var/run/ivory/validator.key
+            {{- end }}
+            {{- if .Values.genesis }}
+            - name: GENESIS_FILE
+              value: /genesis/genesis.json
+            {{- end }}
+          ports:
+            - name: rpc
+              containerPort: {{ .Values.rpc.servicePort }}
+            - name: p2p
+              containerPort: {{ .Values.p2p.port }}
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: rpc
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: rpc
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.master.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            {{- if or .Values.rpc.token .Values.validatorKey }}
+            - name: secrets
+              mountPath: /var/run/ivory
+              readOnly: true
+            {{- end }}
+            {{- if .Values.genesis }}
+            - name: genesis
+              mountPath: /genesis
+              readOnly: true
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if or .Values.rpc.token .Values.validatorKey }}
+        - name: secrets
+          secret:
+            secretName: {{ include "ivory.fullname" . }}
+        {{- end }}
+        {{- if .Values.genesis }}
+        - name: genesis
+          configMap:
+            name: {{ include "ivory.fullname" . }}-genesis
+        {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.master.persistence.storageClass }}
+        storageClassName: {{ .Values.master.persistence.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.master.persistence.size }}
+{{- end }}

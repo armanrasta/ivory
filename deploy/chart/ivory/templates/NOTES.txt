@@ -1,0 +1,16 @@
+Ivory server ({{ include "ivory.fullname" . }})
+
+RPC (in-cluster):  http://{{ include "ivory.fullname" . }}-rpc.{{ .Release.Namespace }}.svc:{{ .Values.rpc.servicePort }}
+P2P bootstrap:     {{ include "ivory.p2pBootstrap" . }}
+Probes:            GET /livez  GET /readyz
+{{- if .Values.rpc.token }}
+RPC token:         Authorization: Bearer <rpc.token>
+{{- end }}
+
+First install without genesis:
+  1. helm install with slave.replicaCount=0 (or wait — slaves need genesis).
+  2. kubectl exec -c ivory {{ include "ivory.fullname" . }}-master-0 -- cat /data/genesis.json > genesis.json
+  3. helm upgrade --set-file genesis=genesis.json --set slave.replicaCount={{ .Values.slave.replicaCount }}
+
+Never commit validator.key. Slaves follow and sync; they are not failover masters.
+Hosted “our chain” is still IVORY_PUBLIC_RPC / IVORY_PUBLIC_BOOTSTRAP — nothing is hard-coded.
