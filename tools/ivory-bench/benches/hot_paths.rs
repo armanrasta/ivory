@@ -1,4 +1,4 @@
-//! Hot-path Criterion benches for the quant-submission engine substrate.
+//! Hot-path Criterion benches for the ledger substrate.
 //!
 //! Run: `cargo bench -p ivory-bench`
 //! Quick smoke: `cargo bench -p ivory-bench -- --quick`

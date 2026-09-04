@@ -1,6 +1,6 @@
 //! # Ivory VM
 //!
-//! wasmi interpreter with `env.storage_get` / `env.storage_set` host stubs.
+//! wasmi interpreter with `env.storage_get` / `env.storage_set` / `env.emit_log`.
 
 pub mod error;
 pub mod vm;
@@ -194,5 +194,30 @@ mod tests {
             WasmVm::new().execute(&wasm, &StateDB::new(), addr(), 0),
             Err(VmError::Instantiate(_))
         ));
+    }
+
+    #[test]
+    fn emit_log_records_topic() {
+        let wasm = wat_to_wasm(
+            r#"(module
+              (import "env" "emit_log" (func $log (param i32)))
+              (func (export "call")
+                i32.const 7
+                call $log
+              )
+            )"#,
+        );
+        let out = WasmVm::new()
+            .execute(&wasm, &StateDB::new(), addr(), 50_000)
+            .unwrap();
+        assert_eq!(out.logs.len(), 1);
+        assert_eq!(out.logs[0].address, addr());
+        let mut topic = [0u8; 32];
+        topic[31] = 7;
+        assert_eq!(
+            out.logs[0].topics[0],
+            ivory_primitives::H256::from_bytes(topic)
+        );
+        assert!(out.gas_left < 50_000);
     }
 }

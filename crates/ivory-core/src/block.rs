@@ -1,9 +1,14 @@
 //! Block, transaction, receipt, and log types.
 
-use ivory_primitives::{Address, Bytes, H256, PublicKey, Signature, U256};
+use ivory_primitives::{Address, Bytes, H256, PublicKey, Signature, U256, keccak256};
 use serde::{Deserialize, Serialize};
 
 use crate::error::BlockError;
+
+fn keccak_bincode<T: Serialize>(value: &T) -> H256 {
+    let encoded = bincode::serialize(value).expect("serialization is infallible");
+    keccak256(&encoded)
+}
 
 /// Block header fields committed by consensus.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -33,14 +38,10 @@ pub struct BlockHeader {
 }
 
 impl BlockHeader {
-    /// Hash this header.
-    ///
-    /// Placeholder: `bincode` encoding + blake3. Replaced by RLP + keccak256 in #16.
+    /// Hash this header: `keccak256(bincode(header))`.
     #[must_use]
     pub fn hash(&self) -> H256 {
-        let encoded = bincode::serialize(self).expect("header serialization is infallible");
-        let digest = blake3::hash(&encoded);
-        H256::from_bytes(*digest.as_bytes())
+        keccak_bincode(self)
     }
 }
 
@@ -83,20 +84,15 @@ struct UnsignedTransaction<'a> {
 }
 
 impl Transaction {
-    /// Hash this transaction (includes signature and public key).
-    ///
-    /// Placeholder: `bincode` encoding + blake3. Replaced by RLP + keccak256 in #16.
+    /// Hash this transaction (includes signature and public key): `keccak256(bincode(tx))`.
     #[must_use]
     pub fn hash(&self) -> H256 {
-        let encoded = bincode::serialize(self).expect("tx serialization is infallible");
-        let digest = blake3::hash(&encoded);
-        H256::from_bytes(*digest.as_bytes())
+        keccak_bincode(self)
     }
 
-    /// Domain-separated signing payload for Ed25519.
+    /// Domain-separated signing payload for Ed25519: `keccak256(bincode(unsigned fields))`.
     ///
-    /// `bincode` of unsigned fields + blake3. Independent of `signature` /
-    /// `public_key`. Replaced by RLP + keccak256 in #16.
+    /// Independent of `signature` / `public_key`.
     #[must_use]
     pub fn signing_hash(&self) -> H256 {
         let unsigned = UnsignedTransaction {
@@ -108,10 +104,7 @@ impl Transaction {
             gas: self.gas,
             nonce: self.nonce,
         };
-        let encoded =
-            bincode::serialize(&unsigned).expect("unsigned tx serialization is infallible");
-        let digest = blake3::hash(&encoded);
-        H256::from_bytes(*digest.as_bytes())
+        keccak_bincode(&unsigned)
     }
 
     /// `true` when this transaction creates a contract (`to` is `None`).

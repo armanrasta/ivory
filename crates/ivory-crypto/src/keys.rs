@@ -7,12 +7,10 @@ use crate::error::CryptoError;
 
 /// Derive a v1 account address from an Ed25519 public key.
 ///
-/// `blake3(pubkey)` then the last 20 bytes ([`Address::from_h256`]).
-/// This domain is a placeholder until protocol hashes land in #16.
+/// `keccak256(pubkey)` then the last 20 bytes ([`Address::from_h256`]).
 #[must_use]
 pub fn address_from_public_key(pk: &PublicKey) -> Address {
-    let digest = blake3::hash(pk.as_bytes());
-    Address::from_h256(ivory_primitives::H256::from_bytes(*digest.as_bytes()))
+    Address::from_h256(ivory_primitives::keccak256(pk.as_bytes()))
 }
 
 /// Public key corresponding to `sk`.

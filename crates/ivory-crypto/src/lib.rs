@@ -1,7 +1,7 @@
 //! # Ivory Crypto
 //!
-//! Ed25519 sign/verify and v1 address derivation (`blake3` of the public key).
-//! Transaction signing uses [`ivory_core::Transaction::signing_hash`] until #16.
+//! Ed25519 sign/verify and v1 address derivation (`keccak256` of the public key).
+//! Transaction signing uses [`ivory_core::Transaction::signing_hash`].
 
 pub mod error;
 pub mod keys;

@@ -1,7 +1,7 @@
 //! Transaction executor.
 
 use ivory_core::{Receipt, Transaction};
-use ivory_primitives::U256;
+use ivory_primitives::{Address, U256, keccak256};
 use ivory_state::StateDB;
 
 use crate::call::{CallInput, CallResult, execute_call};
@@ -53,8 +53,8 @@ impl Executor {
     /// trusts the caller (block producer / tests).
     ///
     /// Missing sender/recipient accounts are treated as empty (`Account::new()`).
-    /// Contract creation (`to: None`) does not derive an address; endowment stays
-    /// uncredited (documented stub until CREATE semantics in #16).
+    /// Contract creation (`to: None`) derives `Address::create(from, nonce)`, credits
+    /// the endowment, and installs `tx.data` as runtime bytecode (no constructor).
     ///
     /// # Errors
     ///
@@ -74,8 +74,7 @@ impl Executor {
         }
 
         let intrinsic = compute_intrinsic_gas(tx, &self.gas_config);
-        let meter = GasMeter::new(tx.gas, intrinsic)?;
-        let gas_used = meter.gas_used();
+        let mut meter = GasMeter::new(tx.gas, intrinsic)?;
 
         let gas_cost = U256::from(tx.gas)
             .checked_mul(tx.gas_price)
@@ -104,7 +103,6 @@ impl Executor {
             .ok_or(ExecutionError::Overflow)?;
         self.state.set_account(tx.from, sender);
 
-        // Call: credit recipient (empty account if missing). Create: endowment stays uncredited.
         if let Some(to) = tx.to {
             let mut recipient = self.state.get_account(&to).unwrap_or_default();
             recipient.balance = recipient
@@ -112,11 +110,26 @@ impl Executor {
                 .checked_add(tx.value)
                 .ok_or(ExecutionError::Overflow)?;
             self.state.set_account(to, recipient);
+        } else {
+            let created = Address::create(&tx.from, tx.nonce);
+            let mut account = self.state.get_account(&created).unwrap_or_default();
+            account.balance = account
+                .balance
+                .checked_add(tx.value)
+                .ok_or(ExecutionError::Overflow)?;
+            let code = tx.data.clone();
+            account.code_hash = keccak256(code.as_slice());
+            self.state.set_account(created, account);
+            self.state.set_code(created, code);
         }
 
         let input = CallInput::from_tx(tx);
-        let call = execute_call(&input, &self.state)?;
+        let call = execute_call(&input, &self.state, meter.remaining)?;
+        if call.gas_used > 0 {
+            meter.spend(call.gas_used)?;
+        }
 
+        let gas_used = meter.gas_used();
         let refund_units = meter.refund_gas();
         let refund = U256::from(refund_units)
             .checked_mul(tx.gas_price)
@@ -326,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn create_path_does_not_credit_recipient() {
+    fn create_path_credits_created_account() {
         let state = StateDB::new();
         let from = addr(1);
         state.set_account(from, funded(0, 1_000_000));
@@ -341,8 +354,12 @@ mod tests {
         assert_eq!(out.gas_used, 21_016);
         let sender = exec.state().get_account(&from).unwrap();
         assert_eq!(sender.nonce, 1);
-        // value 100 stays uncredited; gas 21016 * 1, no refund
         assert_eq!(sender.balance, U256::from(1_000_000u64 - 21_016 - 100));
+        let created = Address::create(&from, 0);
+        let acc = exec.state().get_account(&created).unwrap();
+        assert_eq!(acc.balance, U256::from(100u64));
+        assert_eq!(exec.state().get_code(&created), vec![0x00]);
+        assert_ne!(acc.code_hash, ivory_primitives::H256::ZERO);
     }
 
     #[test]
@@ -493,7 +510,7 @@ mod tests {
     #[test]
     fn execute_call_stub_succeeds() {
         let tx = create_tx(addr(1), 0, 0, 21_016);
-        let result = execute_call(&CallInput::from_tx(&tx), &StateDB::new()).unwrap();
+        let result = execute_call(&CallInput::from_tx(&tx), &StateDB::new(), 0).unwrap();
         assert!(result.success);
         assert!(result.logs.is_empty());
     }
@@ -589,7 +606,7 @@ mod tests {
         let exec = Executor::new(state);
         let mut ctx = ExecutionContext::new(1, 0);
         let out = exec
-            .execute_transaction(&transfer_tx(addr(1), addr(2), 0, 0, 21_000, 1), &mut ctx)
+            .execute_transaction(&transfer_tx(addr(1), addr(2), 0, 0, 100_000, 1), &mut ctx)
             .unwrap();
         assert!(out.receipt.status);
         let mut key = [0u8; 32];

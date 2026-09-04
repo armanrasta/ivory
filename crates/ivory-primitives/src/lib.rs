@@ -50,6 +50,7 @@ mod address;
 mod bytes;
 mod error;
 mod hash;
+mod keccak;
 mod signature;
 mod uint;
 
@@ -57,6 +58,7 @@ pub use address::Address;
 pub use bytes::Bytes;
 pub use error::PrimitiveError;
 pub use hash::{H128, H160, H256, H512, H520};
+pub use keccak::keccak256;
 pub use signature::{PublicKey, SecretKey, Signature};
 pub use uint::{U128, U256, U512};
 

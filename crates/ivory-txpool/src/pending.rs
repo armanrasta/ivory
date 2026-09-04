@@ -15,7 +15,7 @@ pub enum TxOrigin {
 /// Cached pending entry.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingTx {
-    /// Transaction hash (bincode + blake3 placeholder).
+    /// Transaction hash (bincode + keccak256).
     pub hash: H256,
     /// The queued transaction.
     pub tx: Transaction,

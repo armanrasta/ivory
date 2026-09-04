@@ -1,7 +1,7 @@
 //! Transaction signing helpers.
 //!
 //! Signing payload is [`ivory_core::Transaction::signing_hash`] (bincode of
-//! unsigned fields + blake3). Full RLP/keccak migration is #16.
+//! unsigned fields + keccak256).
 
 use ivory_core::Transaction;
 use ivory_primitives::{Address, Bytes, SecretKey, U256};

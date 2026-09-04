@@ -64,20 +64,27 @@ pub struct CallResult {
     pub success: bool,
     /// Logs emitted.
     pub logs: Vec<Log>,
+    /// VM fuel consumed (0 for EOAs and CREATE).
+    pub gas_used: u64,
 }
 
-/// Run the call: EOAs no-op, contracts via wasmi, CREATE still stubbed (#16).
+/// Run the call: EOAs no-op, contracts via wasmi, CREATE installs no constructor.
 ///
-/// Value transfer is applied by [`crate::Executor`] before this is called.
+/// Value transfer / CREATE account setup is applied by [`crate::Executor`] before this.
 ///
 /// # Errors
 ///
-/// [`ExecutionError::Vm`] when WASM is invalid or traps.
-pub fn execute_call(input: &CallInput, state: &StateDB) -> Result<CallResult, ExecutionError> {
+/// [`ExecutionError::Vm`] when WASM is invalid, traps, or runs out of fuel.
+pub fn execute_call(
+    input: &CallInput,
+    state: &StateDB,
+    gas_limit: u64,
+) -> Result<CallResult, ExecutionError> {
     match input.kind {
         CallKind::Create => Ok(CallResult {
             success: true,
             logs: Vec::new(),
+            gas_used: 0,
         }),
         CallKind::Call => {
             let to = input.to.unwrap_or(input.from);
@@ -86,14 +93,17 @@ pub fn execute_call(input: &CallInput, state: &StateDB) -> Result<CallResult, Ex
                 return Ok(CallResult {
                     success: true,
                     logs: Vec::new(),
+                    gas_used: 0,
                 });
             }
             let out = WasmVm::new()
-                .execute(&code, state, to, 0)
+                .execute(&code, state, to, gas_limit)
                 .map_err(|e| ExecutionError::Vm(e.to_string()))?;
+            let gas_used = gas_limit.saturating_sub(out.gas_left);
             Ok(CallResult {
                 success: out.success,
-                logs: Vec::new(),
+                logs: out.logs,
+                gas_used,
             })
         }
     }

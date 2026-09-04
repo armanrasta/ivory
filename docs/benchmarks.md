@@ -1,6 +1,6 @@
 # Benchmarks
 
-Criterion harness: [`tools/ivory-bench`](../tools/ivory-bench/). Measures ledger hot paths that matter for a quant-submission engine — hashing, in-memory state, mempool admission, transfer execution, and pool → execute.
+Criterion harness: [`tools/ivory-bench`](../tools/ivory-bench/). Measures ledger hot paths — hashing, in-memory state, mempool admission, transfer execution, and pool → execute.
 
 ## How to run
 
@@ -24,7 +24,7 @@ Artifacts build under `target/release/deps/` with the `bench` profile. Criterion
 
 Median times below are Criterion’s middle estimate; throughput is where Criterion reported it.
 
-### Transaction hash (`bincode` + blake3)
+### Transaction hash (`bincode` + keccak256)
 
 | Benchmark | Time | Throughput |
 |-----------|------|------------|

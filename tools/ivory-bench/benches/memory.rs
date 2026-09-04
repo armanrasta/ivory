@@ -1,4 +1,4 @@
-//! Memory footprint scenarios for the quant-submission substrate.
+//! Memory footprint scenarios for the ledger substrate.
 //!
 //! Reports allocator heap deltas (`peak_alloc`) and process RSS deltas
 //! (`memory-stats`) after growing state, pool, and execute paths.

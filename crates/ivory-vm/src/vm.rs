@@ -1,8 +1,9 @@
-//! wasmi interpreter and `env` host stubs.
+//! wasmi interpreter and `env` host functions.
 
-use ivory_primitives::{Address, H256, U256};
+use ivory_core::Log;
+use ivory_primitives::{Address, Bytes, H256, U256};
 use ivory_state::StateDB;
-use wasmi::{Caller, Engine, Linker, Module, Store};
+use wasmi::{Caller, Config, Engine, Linker, Module, Store};
 
 use crate::error::VmError;
 
@@ -13,16 +14,27 @@ pub struct VmOutput {
     pub success: bool,
     /// `i32` return of `call` if present.
     pub return_value: Option<i32>,
+    /// Logs from `env.emit_log`.
+    pub logs: Vec<Log>,
+    /// Remaining fuel (equals `gas_limit` minus consumed).
+    pub gas_left: u64,
 }
 
 struct Host {
     state: StateDB,
     address: Address,
+    logs: Vec<Log>,
 }
 
 fn slot_key(slot: i32) -> H256 {
     let mut bytes = [0u8; 32];
     bytes[28..32].copy_from_slice(&slot.to_be_bytes());
+    H256::from_bytes(bytes)
+}
+
+fn topic_from_i32(topic: i32) -> H256 {
+    let mut bytes = [0u8; 32];
+    bytes[28..32].copy_from_slice(&topic.to_be_bytes());
     H256::from_bytes(bytes)
 }
 
@@ -38,28 +50,36 @@ impl Default for WasmVm {
 }
 
 impl WasmVm {
-    /// Default wasmi engine.
+    /// Default wasmi engine with fuel metering enabled.
     #[must_use]
     pub fn new() -> Self {
+        let mut config = Config::default();
+        config.consume_fuel(true);
         Self {
-            engine: Engine::default(),
+            engine: Engine::new(&config),
         }
     }
 
-    /// Load `code`, instantiate with `env.storage_get` / `env.storage_set`, call `call`.
+    /// Load `code`, instantiate with host imports, call `call`.
     ///
-    /// `gas_limit` is accepted for the ABI and unused until metering lands.
+    /// `gas_limit` is remaining gas after intrinsic. `0` is treated as a large
+    /// default so unit tests that omit metering still run.
     ///
     /// # Errors
     ///
-    /// [`VmError`] on invalid modules, missing exports, or traps.
+    /// [`VmError`] on invalid modules, missing exports, traps, or out-of-fuel.
     pub fn execute(
         &self,
         code: &[u8],
         state: &StateDB,
         address: Address,
-        _gas_limit: u64,
+        gas_limit: u64,
     ) -> Result<VmOutput, VmError> {
+        let fuel = if gas_limit == 0 {
+            10_000_000
+        } else {
+            gas_limit
+        };
         let module =
             Module::new(&self.engine, code).map_err(|e| VmError::InvalidModule(e.to_string()))?;
         let mut store = Store::new(
@@ -67,8 +87,12 @@ impl WasmVm {
             Host {
                 state: state.clone(),
                 address,
+                logs: Vec::new(),
             },
         );
+        store
+            .set_fuel(fuel)
+            .map_err(|e| VmError::Instantiate(e.to_string()))?;
         let mut linker = Linker::new(&self.engine);
 
         linker
@@ -95,6 +119,22 @@ impl WasmVm {
             )
             .map_err(|e| VmError::Instantiate(e.to_string()))?;
 
+        linker
+            .func_wrap(
+                "env",
+                "emit_log",
+                |mut caller: Caller<'_, Host>, topic: i32| {
+                    let host = caller.data_mut();
+                    let addr = host.address;
+                    host.logs.push(Log {
+                        address: addr,
+                        topics: vec![topic_from_i32(topic)],
+                        data: Bytes::new(),
+                    });
+                },
+            )
+            .map_err(|e| VmError::Instantiate(e.to_string()))?;
+
         let instance = linker
             .instantiate(&mut store, &module)
             .map_err(|e| VmError::Instantiate(e.to_string()))?
@@ -102,34 +142,44 @@ impl WasmVm {
             .map_err(|e| VmError::Instantiate(e.to_string()))?;
 
         let Some(func) = instance.get_func(&store, "call") else {
+            let gas_left = remaining_fuel(&store, gas_limit);
             return Ok(VmOutput {
                 success: true,
                 return_value: None,
+                logs: store.into_data().logs,
+                gas_left,
             });
         };
 
-        if let Ok(typed) = func.typed::<(), i32>(&store) {
-            return typed
-                .call(&mut store, ())
-                .map(|v| VmOutput {
-                    success: true,
-                    return_value: Some(v),
-                })
-                .map_err(|e| VmError::Trap(e.to_string()));
-        }
+        let call_result = if let Ok(typed) = func.typed::<(), i32>(&store) {
+            typed.call(&mut store, ()).map(Some)
+        } else if let Ok(typed) = func.typed::<(), ()>(&store) {
+            typed.call(&mut store, ()).map(|()| None)
+        } else {
+            return Err(VmError::Export(
+                "call must have type () -> i32 or () -> ()".into(),
+            ));
+        };
 
-        if let Ok(typed) = func.typed::<(), ()>(&store) {
-            return typed
-                .call(&mut store, ())
-                .map(|()| VmOutput {
+        match call_result {
+            Ok(return_value) => {
+                let gas_left = remaining_fuel(&store, gas_limit);
+                Ok(VmOutput {
                     success: true,
-                    return_value: None,
+                    return_value,
+                    logs: store.into_data().logs,
+                    gas_left,
                 })
-                .map_err(|e| VmError::Trap(e.to_string()));
+            }
+            Err(e) => Err(VmError::Trap(e.to_string())),
         }
+    }
+}
 
-        Err(VmError::Export(
-            "call must have type () -> i32 or () -> ()".into(),
-        ))
+fn remaining_fuel(store: &Store<Host>, gas_limit: u64) -> u64 {
+    if gas_limit == 0 {
+        0
+    } else {
+        store.get_fuel().unwrap_or(0)
     }
 }

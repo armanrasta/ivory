@@ -116,59 +116,48 @@ impl Address {
         self.0.to_hex()
     }
 
-    /// Convert to checksummed hex string (EIP-55 style)
-    ///
-    /// Note: This is a simplified version. Full EIP-55 requires keccak256.
-    #[inline]
+    /// Convert to checksummed hex string (EIP-55).
+    #[must_use]
     pub fn to_hex_checksummed(&self) -> String {
-        // For now, just return regular hex
-        // TODO: Implement proper EIP-55 checksum when we have keccak
-        self.0.to_hex()
+        let lower = hex::encode(self.as_bytes());
+        let hash = crate::keccak256(lower.as_bytes());
+        let mut out = String::from("0x");
+        for (i, ch) in lower.chars().enumerate() {
+            if ch.is_ascii_digit() {
+                out.push(ch);
+                continue;
+            }
+            let byte = hash.as_bytes()[i / 2];
+            let nibble = if i % 2 == 0 { byte >> 4 } else { byte & 0x0f };
+            if nibble >= 8 {
+                out.push(ch.to_ascii_uppercase());
+            } else {
+                out.push(ch);
+            }
+        }
+        out
     }
 
-    /// Compute contract address using CREATE semantics
+    /// Contract address from `CREATE`: `keccak256(sender || nonce_be)[12:]`.
     ///
-    /// `address = hash(sender || nonce)[12:]`
-    ///
-    /// Note: This is a placeholder. Real implementation needs proper hashing.
+    /// `nonce` is the sender nonce **before** the creating transaction increments it.
+    #[must_use]
     pub fn create(sender: &Address, nonce: u64) -> Self {
-        // Placeholder implementation
-        // Real implementation would use RLP encoding + keccak256
         let mut data = [0u8; 28];
         data[..20].copy_from_slice(sender.as_bytes());
         data[20..28].copy_from_slice(&nonce.to_be_bytes());
-
-        // Simple hash (not secure, placeholder only)
-        let mut result = [0u8; 20];
-        for (i, chunk) in data.chunks(20).enumerate() {
-            for (j, &byte) in chunk.iter().enumerate() {
-                if j < 20 {
-                    result[j] ^= byte.wrapping_add(i as u8);
-                }
-            }
-        }
-        Address(H160(result))
+        Address::from_h256(crate::keccak256(&data))
     }
 
-    /// Compute contract address using CREATE2 semantics
-    ///
-    /// `address = hash(0xff || sender || salt || code_hash)[12:]`
-    ///
-    /// Note: This is a placeholder. Real implementation needs proper hashing.
+    /// Contract address from `CREATE2`: `keccak256(0xff || sender || salt || code_hash)[12:]`.
+    #[must_use]
     pub fn create2(sender: &Address, salt: &H256, code_hash: &H256) -> Self {
-        // Placeholder implementation
         let mut data = [0u8; 85];
         data[0] = 0xff;
         data[1..21].copy_from_slice(sender.as_bytes());
         data[21..53].copy_from_slice(salt.as_bytes());
         data[53..85].copy_from_slice(code_hash.as_bytes());
-
-        // Simple hash (not secure, placeholder only)
-        let mut result = [0u8; 20];
-        for (i, &byte) in data.iter().enumerate() {
-            result[i % 20] ^= byte.wrapping_add((i / 20) as u8);
-        }
-        Address(H160(result))
+        Address::from_h256(crate::keccak256(&data))
     }
 }
 
@@ -358,6 +347,16 @@ mod tests {
         let addr1 = Address::create(&sender, 0);
         let addr2 = Address::create(&sender, 1);
         assert_ne!(addr1, addr2);
+        assert!(!addr1.is_zero());
+    }
+
+    #[test]
+    fn test_eip55_checksum() {
+        let addr = Address::from_hex("0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed").unwrap();
+        assert_eq!(
+            addr.to_hex_checksummed(),
+            "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
+        );
     }
 
     #[cfg(feature = "serde")]
