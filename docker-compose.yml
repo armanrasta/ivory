@@ -1,32 +1,51 @@
 services:
+  fixperms:
+    image: busybox:1.36
+    command: ["sh", "-c", "chown -R 65532:65532 /v /f /s"]
+    volumes:
+      - validator-data:/v
+      - follower-data:/f
+      - shared-genesis:/s
+
   validator:
     build: .
+    user: "65532:65532"
     environment:
       NODE_ROLE: validator
       DATA_DIR: /data
+      RPC_ADDR: 0.0.0.0:8545
+      IVORY_CORS: "*"
     ports:
       - "8545:8545"
     volumes:
       - validator-data:/data
       - shared-genesis:/shared
+    depends_on:
+      fixperms:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "curl", "-sf", "-H", "Content-Type: application/json", "-d", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_blockNumber\",\"params\":[]}", "http://127.0.0.1:8545/"]
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8545/livez"]
       interval: 5s
       timeout: 3s
       retries: 20
 
   follower:
     build: .
+    user: "65532:65532"
     environment:
       NODE_ROLE: follower
       DATA_DIR: /data
+      RPC_ADDR: 0.0.0.0:8545
       BOOTSTRAP: /dns4/validator/tcp/9000
+      IVORY_CORS: "*"
     ports:
       - "8546:8545"
     volumes:
       - follower-data:/data
       - shared-genesis:/shared
     depends_on:
+      fixperms:
+        condition: service_completed_successfully
       validator:
         condition: service_healthy
 
