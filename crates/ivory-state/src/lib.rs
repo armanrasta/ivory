@@ -5,5 +5,5 @@
 pub mod state;
 pub mod trie;
 
-pub use state::StateDB;
-pub use trie::{empty_root, patricia_nodes, patricia_root};
+pub use state::{StateDB, StateSnapshot};
+pub use trie::{ProofError, TrieProof, empty_root, patricia_nodes, patricia_root, prove, verify};

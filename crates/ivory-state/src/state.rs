@@ -5,9 +5,21 @@ use std::sync::Arc;
 
 use ivory_core::Account;
 use ivory_primitives::{Address, Bytes, H256, U256};
+use serde::{Deserialize, Serialize};
 
-use crate::trie::{patricia_nodes, patricia_root};
+use crate::trie::{TrieProof, patricia_nodes, patricia_root, prove};
 use parking_lot::RwLock;
+
+/// Serializable account / storage / code maps (persist + archive reload).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StateSnapshot {
+    /// Non-empty accounts.
+    pub accounts: Vec<(Address, Account)>,
+    /// Non-zero storage slots.
+    pub storage: Vec<(Address, H256, U256)>,
+    /// Contract bytecode.
+    pub code: Vec<(Address, Bytes)>,
+}
 
 /// In-memory account and storage maps.
 ///
@@ -139,6 +151,82 @@ impl StateDB {
             pairs.push((addr.as_bytes().to_vec(), value));
         }
         patricia_nodes(&pairs).1
+    }
+
+    /// Patricia proof for `addr` in the account trie.
+    #[must_use]
+    pub fn account_proof(&self, addr: &Address) -> TrieProof {
+        prove(&self.account_pairs(), addr.as_bytes())
+    }
+
+    /// Patricia proof for `slot` in `addr`'s storage trie.
+    #[must_use]
+    pub fn storage_proof(&self, addr: &Address, slot: &H256) -> TrieProof {
+        prove(&self.storage_pairs(*addr), slot.as_bytes())
+    }
+
+    /// Copy maps into a persistable snapshot.
+    #[must_use]
+    pub fn to_snapshot(&self) -> StateSnapshot {
+        StateSnapshot {
+            accounts: self
+                .accounts
+                .read()
+                .iter()
+                .map(|(a, acc)| (*a, acc.clone()))
+                .collect(),
+            storage: self
+                .storage
+                .read()
+                .iter()
+                .map(|((a, s), v)| (*a, *s, *v))
+                .collect(),
+            code: self
+                .code
+                .read()
+                .iter()
+                .map(|(a, c)| (*a, c.clone()))
+                .collect(),
+        }
+    }
+
+    /// Rebuild isolated state from [`StateSnapshot`].
+    #[must_use]
+    pub fn from_snapshot(snap: StateSnapshot) -> Self {
+        let db = Self::new();
+        *db.accounts.write() = snap.accounts.into_iter().collect();
+        *db.storage.write() = snap
+            .storage
+            .into_iter()
+            .map(|(a, s, v)| ((a, s), v))
+            .collect();
+        *db.code.write() = snap.code.into_iter().collect();
+        db
+    }
+
+    fn account_pairs(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
+        self.sync_all_storage_roots();
+        let accounts = self.accounts.read();
+        let mut pairs = Vec::new();
+        for (addr, acc) in accounts.iter() {
+            if acc.is_empty() {
+                continue;
+            }
+            let value = bincode::serialize(acc).expect("account bincode");
+            pairs.push((addr.as_bytes().to_vec(), value));
+        }
+        pairs
+    }
+
+    fn storage_pairs(&self, addr: Address) -> Vec<(Vec<u8>, Vec<u8>)> {
+        let storage = self.storage.read();
+        let mut pairs = Vec::new();
+        for ((a, slot), val) in storage.iter() {
+            if *a == addr && !val.is_zero() {
+                pairs.push((slot.to_bytes().to_vec(), val.to_be_bytes().to_vec()));
+            }
+        }
+        pairs
     }
 }
 
@@ -337,5 +425,41 @@ mod tests {
         );
         assert_eq!(db.get_storage(&addr(1), &slot(1)), U256::from(7u64));
         assert_eq!(db.get_storage(&addr(2), &slot(2)), U256::from(8u64));
+    }
+
+    #[test]
+    fn account_proof_verifies() {
+        let db = StateDB::new();
+        let mut acc = Account::new();
+        acc.balance = U256::from(9u64);
+        db.set_account(addr(1), acc.clone());
+        let proof = db.account_proof(&addr(1));
+        assert_eq!(proof.root, db.root_hash());
+        let value = crate::verify(proof.root, addr(1).as_bytes(), &proof.nodes)
+            .unwrap()
+            .unwrap();
+        let decoded: Account = bincode::deserialize(&value).unwrap();
+        assert_eq!(decoded.balance, acc.balance);
+        let missing = db.account_proof(&addr(9));
+        assert!(missing.value.is_none());
+        assert!(
+            crate::verify(missing.root, addr(9).as_bytes(), &missing.nodes)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn snapshot_roundtrip() {
+        let db = StateDB::new();
+        let mut acc = Account::new();
+        acc.nonce = 4;
+        db.set_account(addr(1), acc);
+        db.set_storage(addr(1), slot(1), U256::from(3u64));
+        db.set_code(addr(1), Bytes::from_vec(vec![1, 2]));
+        let restored = StateDB::from_snapshot(db.to_snapshot());
+        assert_eq!(restored.get_account(&addr(1)).unwrap().nonce, 4);
+        assert_eq!(restored.get_storage(&addr(1), &slot(1)), U256::from(3u64));
+        assert_eq!(restored.get_code(&addr(1)), vec![1, 2]);
     }
 }
