@@ -10,7 +10,7 @@ mining or speculative “gold digging” network.
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Consensus | Proof-of-Authority | Simple validator set; enough for private / consortium nets |
-| Storage | RocksDB + in-memory maps | Fast to ship; Merkle-Patricia trie deferred |
+| Storage | RocksDB + in-memory maps + keccak Patricia | Account/storage tries hashed in-tree (bincode nodes, not RLP) |
 | Contracts | WASM via wasmi | Pure Rust interpreter; auditable |
 | Networking | libp2p | Rust-first; gossipsub + DHT |
 | RPC | JSON-RPC 2.0 (Axum) | Familiar to Ethereum tooling |
@@ -20,7 +20,7 @@ mining or speculative “gold digging” network.
 
 - **Primitives** — hashes, addresses, `U256`, bytes, Ed25519-shaped signature types
 - **Crypto** — `sign` / `verify`, address = last 20 bytes of `keccak256(ed25519_pubkey)`
-- **Core** — `Account`, `BlockHeader`, `Transaction`, `Receipt`, `Log`, `QuantEnvelope`; hashes are `keccak256(bincode(...))`; `signing_hash` omits signature and public key
+- **Core** — `Account`, `BlockHeader`, `Transaction`, `Receipt`, `Log`, `QuantEnvelope`; hashes are `keccak256(bincode(...))`; `signing_hash` omits signature and public key; header `transactions_root` / `receipts_root` are `list_root` (keccak of bincode of the lists), including a non-zero empty-list root
 - **State** — `StateDB` over `HashMap` plus a keccak Patricia `root_hash` (account + storage tries)
 - **Storage** — `RocksDbBackend` KV API; node persists canonical blocks under `--data-dir/chain`
 - **Tx pool** — Ed25519 verify on admit, strict contiguous nonces (`ivory-txpool`)
@@ -38,11 +38,11 @@ Header hashing is **bincode + keccak256**. Wire encoding stays bincode (not RLP)
 
 ## Docs
 
-- [products.md](products.md) · [architecture.md](architecture.md) · [rpc.md](rpc.md) · [protocol.md](protocol.md) · [quant-envelope.md](quant-envelope.md) · [contracts.md](contracts.md) · [deploy.md](deploy.md)
+- [products.md](products.md) · [architecture.md](architecture.md) · [rpc.md](rpc.md) · [protocol.md](protocol.md) · [quant-envelope.md](quant-envelope.md) · [contracts.md](contracts.md) · [deploy.md](deploy.md) · [light.md](light.md) · [coverage.md](coverage.md)
 
 ## What is next
 
-See [issue #24](https://github.com/armanrasta/ivory/issues/24): coverage/metrics, light client. Testnet compose and the Helm chart are in-tree (`docker-compose.yml`, `deploy/chart/ivory`). Re-init existing data dirs after the state-root seal change.
+See [issue #24](https://github.com/armanrasta/ivory/issues/24). Protocol roots, coverage jobs, `/metrics`, WASM calldata, `eth_getLogs`, P2P allowlist, local faucet, light headers, and Helm read-only/metrics are in-tree. Re-init existing data dirs after the tx/receipt-root header change. Hosted URLs stay `IVORY_PUBLIC_RPC` / `IVORY_PUBLIC_BOOTSTRAP`.
 
 ## Crate dependency sketch
 

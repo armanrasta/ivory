@@ -40,6 +40,14 @@ spec:
               value: 0.0.0.0:{{ .Values.rpc.servicePort }}
             - name: P2P_LISTEN
               value: /ip4/0.0.0.0/tcp/{{ .Values.p2p.port }}
+            {{- if .Values.p2p.allowPeerIds }}
+            - name: P2P_ALLOWLIST
+              value: {{ .Values.p2p.allowPeerIds | join "," | quote }}
+            {{- end }}
+            {{- if .Values.rpc.readOnly.enabled }}
+            - name: RPC_READ_ADDR
+              value: 0.0.0.0:{{ .Values.rpc.readOnly.servicePort }}
+            {{- end }}
             {{- if .Values.rpc.cors }}
             - name: IVORY_CORS
               value: {{ .Values.rpc.cors | quote }}
@@ -59,6 +67,10 @@ spec:
           ports:
             - name: rpc
               containerPort: {{ .Values.rpc.servicePort }}
+            {{- if .Values.rpc.readOnly.enabled }}
+            - name: rpc-read
+              containerPort: {{ .Values.rpc.readOnly.servicePort }}
+            {{- end }}
             - name: p2p
               containerPort: {{ .Values.p2p.port }}
           livenessProbe:

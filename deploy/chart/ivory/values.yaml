@@ -12,20 +12,33 @@ serviceAccount:
   name: ""
 
 rpc:
-  # Optional bearer token for POST / and /ui. Probes stay open.
+  # Optional bearer token for POST / and /ui. Probes and /metrics stay open.
   token: ""
   # Empty = no CORS. "*" for local /ui. Comma-separated origins otherwise.
   cors: ""
   servicePort: 8545
+  # Second ClusterIP documenting the read-only method allowlist (same pod port
+  # unless rpc_read_addr is set on the node).
+  readOnly:
+    enabled: false
+    servicePort: 8546
 
 p2p:
   port: 9000
+  # Empty = open Noise. Peer ids from ivory_nodeInfo.
+  allowPeerIds: []
+
+metrics:
+  serviceMonitor:
+    enabled: false
+    interval: 15s
 
 # Genesis JSON (required when slave.replicaCount > 0).
 # helm upgrade --set-file genesis=./genesis.json
 genesis: ""
 
 # Optional hex Ed25519 secret. Without it, master runs ivory init on an empty PVC.
+# Prefer External Secrets / SealedSecrets in the cluster; do not vendor-lock the chart.
 validatorKey: ""
 
 master:
@@ -43,6 +56,7 @@ master:
 
 slave:
   # 0 on first install (master writes genesis). Then helm upgrade --set-file genesis=...
+  # Use 2 for a 1 master + 2 slave path.
   replicaCount: 0
   persistence:
     size: 10Gi

@@ -1,7 +1,7 @@
 # JSON-RPC
 
 HTTP `POST /` with JSON-RPC 2.0. WebSocket upgrade supports `eth_subscribe`
-(`newHeads`, `newPendingTransactions`). HTTP subscribe returns an error.
+(`newHeads`, `newPendingTransactions`, `logs`). HTTP subscribe returns an error.
 
 Default bind: `127.0.0.1:8545` (`rpc_addr` in `config.toml`).
 
@@ -34,15 +34,23 @@ otherwise a comma-separated origin allowlist.
 | `eth_getTransactionCount` | Live account nonce (block tags ignored) |
 | `eth_getTransactionReceipt` | `logs`, `contractAddress` on CREATE |
 | `eth_sendRawTransaction` | Hex of **bincode** `Transaction` |
-| `eth_call` | Fork-and-simulate on live state (`latest`/`pending`) or `state_at` for other tags. Returns `0x` + hex of a 32-byte big-endian WASM `i32`, or `0x` for EOA/CREATE. WASM `data` is unused (`call` has no calldata). |
+| `eth_call` | Fork-and-simulate on live state (`latest`/`pending`) or `state_at` for other tags. Returns `0x` + hex of a 32-byte big-endian WASM `i32`, or `0x` for EOA/CREATE. WASM `data` is `env.calldata_*` (no Solidity ABI). |
 | `eth_estimateGas` | Same simulation; returns intrinsic + VM fuel (no binary search) |
-| `eth_subscribe` | WebSocket only: `newHeads`, `newPendingTransactions` |
+| `eth_getLogs` | Receipt scan by `fromBlock`/`toBlock`/`address`. Errors if the range exceeds 1000 blocks. No bloom. |
+| `eth_getProof` | Not served: nodes are written to RocksDB (`t` + hash) but a proof walk is not exported yet. |
+| `eth_subscribe` | WebSocket only: `newHeads`, `newPendingTransactions`, `logs` (optional address filter) |
 | `eth_unsubscribe` | WebSocket only |
 | `ivory_nodeInfo` | Role (`producer` / `follower`), address, chain id, peer id, peers, pending, head, bootstrap |
 | `ivory_listContracts` | CREATE addresses, code size, and file catalog (`name` / `schema` / `registered`) |
+| `ivory_getHeaderByNumber` | Header fields only (no `transactions`). Light clients should use this instead of `eth_getBlockByNumber`. |
 
-Unknown methods return `-32601`. Not implemented: `eth_sendTransaction`, `logs`
-subscriptions.
+Unknown methods return `-32601`. Not implemented: `eth_sendTransaction`,
+`eth_feeHistory` / 1559 fields.
+
+`GET /metrics` is unauthenticated like `/livez` / `/readyz` (Prometheus text).
+Restrict scrape with NetworkPolicy label `ivory.io/metrics-client`.
+`ivory_nodeInfo.peerId` is the libp2p id to put in `p2p_allowlist` / Helm
+`p2p.allowPeerIds`. Header-only reads: [light.md](light.md).
 
 ## Raw transaction
 

@@ -11,7 +11,7 @@ Ivory timestamps records and tracks chain data. It is not a mining or gold-diggi
 | **Purpose** | Open-source permissioned chain you can run locally or in a small validator set |
 | **Stack** | Rust workspace · Tokio · Axum · libp2p · RocksDB · wasmi |
 | **Consensus (v1)** | Proof-of-Authority — simple validator set; PoS later if needed |
-| **API** | Ethereum-style JSON-RPC over HTTP; WebSocket `eth_subscribe` for `newHeads` / `newPendingTransactions` |
+| **API** | Ethereum-style JSON-RPC over HTTP; WebSocket `eth_subscribe` for `newHeads` / `newPendingTransactions` / `logs` |
 
 ## Status
 
@@ -113,7 +113,7 @@ Recorded numbers and how to read them: [docs/benchmarks.md](docs/benchmarks.md).
 
 1. **Now** — Durable local/multi-node demo (persist, gossip from RPC, quant envelope, Python client)
 2. **Testnet** — Docker compose + Helm chart (`deploy/chart/ivory`)
-3. **Later** — coverage/metrics, light client
+3. **Later** — protocol → coverage → metrics, then light client
 
 Details: [issues](https://github.com/armanrasta/ivory/issues) · [docs/overview.md](docs/overview.md) · [docs/architecture.md](docs/architecture.md) · [docs/protocol.md](docs/protocol.md)
 

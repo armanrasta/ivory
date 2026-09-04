@@ -1,6 +1,6 @@
 # Deploy
 
-Compose is the laptop stand-in: two containers, a shared genesis volume, open
+Compose is the laptop stand-in: one master + two slaves, a shared genesis volume, open
 CORS so `/ui` works in a browser. **Helm** is how you run **your** server on a
 cluster. Hosted “our chain” stays env-only (`IVORY_PUBLIC_RPC` /
 `IVORY_PUBLIC_BOOTSTRAP`); nothing in the chart hard-codes a public hostname.
@@ -18,6 +18,11 @@ JSON-RPC: `http://127.0.0.1:8545`. Explorer: `http://127.0.0.1:8545/ui`.
 The genesis alloc funds the validator address (that key is the local **faucet**
 for demos).
 
+Re-init existing data dirs after the header `transactions_root` /
+`receipts_root` change (`ivory init` on a fresh `--data-dir`, then refresh
+Compose volumes / the Helm genesis ConfigMap). Old RocksDB chains will not
+match the new empty-list roots.
+
 Data dir layout:
 
 - `config.toml` — `chain_id`, `rpc_addr`, `p2p_listen`, `bootstrap`, `block_interval_ms`, `role` (`master` / `slave`)
@@ -34,13 +39,25 @@ docker compose up --build
 ```
 
 - Master (validator) RPC: `http://127.0.0.1:8545` — UI `http://127.0.0.1:8545/ui`
-- Slave (follower) RPC: `http://127.0.0.1:8546` — UI `http://127.0.0.1:8546/ui`
+- Slave 1 RPC: `http://127.0.0.1:8546` — UI `http://127.0.0.1:8546/ui`
+- Slave 2 RPC: `http://127.0.0.1:8547` — UI `http://127.0.0.1:8547/ui`
+- Compose block interval is `BLOCK_INTERVAL_MS=2000` (2s). The same value is
+  `block_interval_ms` in `config.toml` (default 2000).
 - Compose sets `IVORY_CORS=*` so the explorer can call RPC from the browser.
 - Slave waits on `/shared/genesis.json` (compose fallback). Kubernetes uses
   `GENESIS_FILE` / a ConfigMap instead.
 - First start runs `ivory init` if the data volume is empty. Copy
   `validator.key` from the volume if you need to sign transfers.
-- Healthcheck is `GET /livez` (process up). `GET /readyz` is genesis/head.
+- Master healthcheck is `GET /livez`. Slaves use `GET /readyz` (genesis/head).
+
+Local faucet (signs from `validator.key`; never commit that file):
+
+```bash
+cargo run -p ivory-dev -- faucet --to 0x… --amount 1000000000000000000 --chain local --data-dir ./ivory-data
+```
+
+Helm: store the key in a Secret (`--set-file validatorKey=`). Do not invent a
+public RPC DNS. Hosted URLs stay `IVORY_PUBLIC_RPC` / `IVORY_PUBLIC_BOOTSTRAP`.
 
 The image runs as uid `65532`. See `docker-compose.yml` and
 `deploy/docker-entrypoint.sh`.
@@ -89,7 +106,7 @@ helm upgrade ivory deploy/chart/ivory --set-file validatorKey=./validator.key
 ```
 
 Never commit `validator.key`. Rotate `rpc.token` with `helm upgrade`. After a
-state-root / seal change, re-init data dirs and refresh the genesis ConfigMap
+tx/receipt-root or state-root / seal change, re-init data dirs and refresh the genesis ConfigMap
 the same way (`--set-file genesis=`).
 
 | Object | Purpose |
@@ -123,5 +140,34 @@ See [contracts.md](contracts.md) and [products.md](products.md).
 
 ## Monitoring
 
-Prometheus / ServiceMonitor is not in this chart (#21). Use `GET /livez` and
-`GET /readyz` first; do not POST `eth_blockNumber` as a probe.
+`GET /metrics` is Prometheus text (unauthenticated like `/livez` / `/readyz`).
+NetworkPolicy allows scrape from pods labeled `ivory.io/metrics-client: "true"`.
+Helm ServiceMonitor is off by default (`metrics.serviceMonitor.enabled`).
+
+Compose optional scrape: `docker compose --profile metrics up`. Grafana JSON is
+optional (`deploy/grafana-ivory.json` and `deploy/grafana/ivory-dashboard.json`)
+and is not required to run the node.
+
+Do not POST `eth_blockNumber` as a probe.
+
+## Faucet
+
+Local only: sign from the validator key (never a web faucet, never commit
+`validator.key`):
+
+```bash
+cargo run -p ivory-dev -- faucet --to 0x... --amount 1000000000000000000 --chain local --data-dir ./ivory-data
+```
+
+On Helm, mount the key as a Secret (`validatorKey` / External Secrets /
+SealedSecrets). The chart does not vendor-lock a secrets controller.
+
+## Three-node path
+
+Compose: validator + `follower` + `follower-2` (1 master + 2 slaves). Helm:
+`slave.replicaCount=2` after the genesis ConfigMap exists. Block interval is
+2s in Compose (`BLOCK_INTERVAL_MS=2000`) vs `block_interval_ms` in
+`config.toml`.
+
+Get the master `peerId` from `ivory_nodeInfo` before setting
+`p2p.allowPeerIds` (empty allowlist keeps open Noise).

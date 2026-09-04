@@ -1,0 +1,42 @@
+{
+  "title": "Ivory",
+  "uid": "ivory-metrics",
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "browser",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Head number",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [{ "expr": "ivory_head_number", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Txpool pending",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [{ "expr": "ivory_txpool_pending", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "P2P peers",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [{ "expr": "ivory_p2p_peers", "refId": "A" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "RPC requests",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [{ "expr": "rate(ivory_rpc_requests_total[1m])", "refId": "A" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Blocks produced / imported",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        { "expr": "rate(ivory_blocks_produced_total[1m])", "refId": "A", "legendFormat": "produced" },
+        { "expr": "rate(ivory_blocks_imported_total[1m])", "refId": "B", "legendFormat": "imported" }
+      ]
+    }
+  ]
+}

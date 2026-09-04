@@ -43,6 +43,10 @@ spec:
               value: 0.0.0.0:{{ .Values.rpc.servicePort }}
             - name: P2P_LISTEN
               value: /ip4/0.0.0.0/tcp/{{ .Values.p2p.port }}
+            {{- if .Values.p2p.allowPeerIds }}
+            - name: P2P_ALLOWLIST
+              value: {{ .Values.p2p.allowPeerIds | join "," | quote }}
+            {{- end }}
             - name: BOOTSTRAP
               value: {{ include "ivory.p2pBootstrap" . | quote }}
             - name: GENESIS_FILE

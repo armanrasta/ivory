@@ -1,0 +1,17 @@
+{{- if .Values.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "ivory.fullname" . }}
+  labels:
+    {{- include "ivory.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "ivory.selectorLabels" . | nindent 6 }}
+      ivory.io/rpc: "true"
+  endpoints:
+    - port: rpc
+      path: /metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+{{- end }}

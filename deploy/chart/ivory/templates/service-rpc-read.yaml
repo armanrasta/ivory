@@ -1,0 +1,18 @@
+{{- if .Values.rpc.readOnly.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ivory.fullname" . }}-rpc-read
+  labels:
+    {{- include "ivory.labels" . | nindent 4 }}
+    ivory.io/rpc-mode: read
+spec:
+  type: ClusterIP
+  ports:
+    - name: rpc-read
+      port: {{ .Values.rpc.readOnly.servicePort }}
+      targetPort: rpc-read
+  selector:
+    {{- include "ivory.selectorLabels" . | nindent 4 }}
+    ivory.io/rpc: "true"
+{{- end }}

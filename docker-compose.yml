@@ -1,10 +1,11 @@
 services:
   fixperms:
     image: busybox:1.36
-    command: ["sh", "-c", "chown -R 65532:65532 /v /f /s"]
+    command: ["sh", "-c", "chown -R 65532:65532 /v /f /f2 /s"]
     volumes:
       - validator-data:/v
       - follower-data:/f
+      - follower-2-data:/f2
       - shared-genesis:/s
 
   validator:
@@ -15,6 +16,7 @@ services:
       DATA_DIR: /data
       RPC_ADDR: 0.0.0.0:8545
       IVORY_CORS: "*"
+      BLOCK_INTERVAL_MS: "2000"
     ports:
       - "8545:8545"
     volumes:
@@ -48,8 +50,50 @@ services:
         condition: service_completed_successfully
       validator:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8545/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  follower-2:
+    build: .
+    user: "65532:65532"
+    environment:
+      NODE_ROLE: follower
+      DATA_DIR: /data
+      RPC_ADDR: 0.0.0.0:8545
+      BOOTSTRAP: /dns4/validator/tcp/9000
+      IVORY_CORS: "*"
+    ports:
+      - "8547:8545"
+    volumes:
+      - follower-2-data:/data
+      - shared-genesis:/shared
+    depends_on:
+      fixperms:
+        condition: service_completed_successfully
+      validator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8545/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    profiles: ["metrics"]
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      validator:
+        condition: service_healthy
 
 volumes:
   validator-data:
   follower-data:
+  follower-2-data:
   shared-genesis:

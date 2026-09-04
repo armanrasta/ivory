@@ -24,6 +24,10 @@ spec:
           podSelector:
             matchLabels:
               ivory.io/rpc-client: "true"
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              ivory.io/metrics-client: "true"
         {{- range .Values.networkPolicy.rpcFrom }}
         - {{- toYaml . | nindent 10 }}
         {{- end }}
@@ -31,6 +35,17 @@ spec:
         - ipBlock:
             cidr: {{ . | quote }}
         {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.rpc.servicePort }}
+        {{- if .Values.rpc.readOnly.enabled }}
+        - protocol: TCP
+          port: {{ .Values.rpc.readOnly.servicePort }}
+        {{- end }}
+    - from:
+        - podSelector:
+            matchLabels:
+              ivory.io/metrics-client: "true"
       ports:
         - protocol: TCP
           port: {{ .Values.rpc.servicePort }}

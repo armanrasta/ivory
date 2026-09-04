@@ -1,16 +1,28 @@
 Ivory server ({{ include "ivory.fullname" . }})
 
-RPC (in-cluster):  http://{{ include "ivory.fullname" . }}-rpc.{{ .Release.Namespace }}.svc:{{ .Values.rpc.servicePort }}
-P2P bootstrap:     {{ include "ivory.p2pBootstrap" . }}
-Probes:            GET /livez  GET /readyz
+RPC (in-cluster write):  http://{{ include "ivory.fullname" . }}-rpc.{{ .Release.Namespace }}.svc:{{ .Values.rpc.servicePort }}
+{{- if .Values.rpc.readOnly.enabled }}
+RPC (read-only Service): http://{{ include "ivory.fullname" . }}-rpc-read.{{ .Release.Namespace }}.svc:{{ .Values.rpc.readOnly.servicePort }}
+{{- end }}
+P2P bootstrap:           {{ include "ivory.p2pBootstrap" . }}
+Probes:                  GET /livez  GET /readyz
+Metrics:                 GET /metrics (unauthenticated, like probes)
 {{- if .Values.rpc.token }}
-RPC token:         Authorization: Bearer <rpc.token>
+RPC token:               Authorization: Bearer <rpc.token>
 {{- end }}
 
-First install without genesis:
-  1. helm install with slave.replicaCount=0 (or wait — slaves need genesis).
-  2. kubectl exec -c ivory {{ include "ivory.fullname" . }}-master-0 -- cat /data/genesis.json > genesis.json
-  3. helm upgrade --set-file genesis=genesis.json --set slave.replicaCount={{ .Values.slave.replicaCount }}
+First-install genesis ConfigMap checklist:
+  1. helm install with slave.replicaCount=0 (slaves need genesis.json).
+  2. Wait until master-0 is Ready (GET /readyz).
+  3. kubectl exec -c ivory {{ include "ivory.fullname" . }}-master-0 -- cat /data/genesis.json > genesis.json
+  4. helm upgrade --set-file genesis=genesis.json --set slave.replicaCount=2
+  5. Confirm ivory_nodeInfo.peerId on the master and set p2p.allowPeerIds if you want a closed set.
 
-Never commit validator.key. Slaves follow and sync; they are not failover masters.
+Never commit validator.key. Use a Kubernetes Secret / External Secrets / SealedSecrets
+outside this chart (the chart only mounts a generic Secret). Slaves follow and sync;
+they are not failover masters.
+
+Faucet (local, from validator.key — not a web faucet):
+  cargo run -p ivory-dev -- faucet --to 0x… --amount 1000000000000000000 --chain local --data-dir ./ivory-data
+
 Hosted “our chain” is still IVORY_PUBLIC_RPC / IVORY_PUBLIC_BOOTSTRAP — nothing is hard-coded.

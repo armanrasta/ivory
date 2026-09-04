@@ -1,8 +1,8 @@
 # Protocol domain (frozen for testnet)
 
-This is the #16 freeze: **keep Ed25519**, keep **bincode** on the wire, switch
-digests to **keccak256**. RLP remains a possible later migration; it is not
-required to launch.
+This is the #16 freeze: **Ed25519** signatures, **bincode** on the wire, and
+**keccak256** digests. ECDSA and RLP are out of scope for this protocol.
+Criterion numbers live in [benchmarks.md](benchmarks.md), not here.
 
 ## Hashes
 
@@ -36,6 +36,8 @@ wasmi fuel is the remaining gas after intrinsic. Host imports:
 
 - `env.storage_get` / `env.storage_set`
 - `env.emit_log` (i32 topic → one log)
+- `env.calldata_len` / `env.calldata_at` (`tx.data` / `eth_call` data; existing
+  `call () -> i32` contracts keep working; no Solidity ABI encoder)
 
 Receipts include `logs`. Out-of-fuel traps.
 
@@ -48,10 +50,20 @@ each contract’s `storage_root` is a Patricia trie of non-zero slots
 non-zero `empty_root`. Empty contract storage stays `0x0` so `Account::is_empty`
 still holds.
 
-Genesis headers seal the alloc root. Existing data dirs must be
-re-initialized (`ivory init`) after this change.
+Genesis headers seal the alloc root and the empty-list transaction/receipt
+roots. Existing data dirs must be re-initialized (`ivory init`) after this
+header change.
 
-`transactions_root` and `receipts_root` stay `0x0`.
+## Transaction and receipt roots
+
+`transactions_root` and `receipts_root` are `list_root` =
+`keccak256(bincode(items))`. They are **not** Merkle-Patricia tries and are
+**not** Ethereum RLP list roots.
+
+An empty list is the keccak of bincode’s empty `Vec` (length prefix, no
+elements). That hash is **not** `0x0`. Empty transaction and receipt lists
+share the same empty-`Vec` encoding, so their empty roots are equal. A header
+that still commits `0x0` for either root is invalid.
 
 ## Forks
 
@@ -60,3 +72,26 @@ mismatched `state_root`. If the canonical head moves, live executor/RPC state
 is reset from the new-head snapshot. Dropped-fork transactions return to the
 pool. Persistence still stores canonical blocks only; restart replays genesis
 alloc plus the canonical path.
+
+## Light header chain
+
+A light client can follow **hash-linked headers + PoA seals** without bodies:
+
+- `parent_hash` links the header chain
+- `extra_data` holds the Ed25519 seal over the header hash
+- `state_root` / `transactions_root` / `receipts_root` commit to state and lists
+- Bodies are optional; `ivory_getHeaderByNumber` returns header fields only
+
+`eth_getBlockByNumber` still returns the full block (tx hashes) when the
+node has that body. Patricia account-trie nodes are written under RocksDB
+keys `t` + hash (`ChainPersist::persist_trie_nodes`). `eth_getProof` is not
+served until a proof walker is added on those nodes.
+
+Non-canonical `BlockStore` snapshots are pruned on head movement.
+
+## Archive
+
+`config.toml` `archive = true` (default) keeps every body and snapshot.
+`archive = false` plus `archive_keep` drops non-canonical snapshots and
+in-memory bodies below `head - archive_keep + 1`. Disk still stores full
+canonical blocks so restart can replay, then apply the same window.

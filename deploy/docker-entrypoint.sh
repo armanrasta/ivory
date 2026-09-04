@@ -44,7 +44,32 @@ bootstrap = $(bootstrap_toml)
 block_interval_ms = ${BLOCK_INTERVAL_MS}
 contracts_dir = ""
 role = "${ROLE}"
+p2p_allowlist = $(allowlist_toml)
+archive = ${ARCHIVE:-true}
+archive_keep = ${ARCHIVE_KEEP:-256}
+rpc_read_addr = "${RPC_READ_ADDR:-}"
 EOF
+}
+
+allowlist_toml() {
+  if [ -z "${P2P_ALLOWLIST:-}" ]; then
+    printf '%s' '[]'
+    return
+  fi
+  printf '['
+  first=1
+  IFS=','
+  for id in $P2P_ALLOWLIST; do
+    id=$(echo "$id" | tr -d ' ')
+    [ -z "$id" ] && continue
+    if [ "$first" -eq 1 ]; then
+      first=0
+    else
+      printf ', '
+    fi
+    printf '"%s"' "$id"
+  done
+  printf ']'
 }
 
 upsert_toml() {
@@ -114,6 +139,10 @@ else
   upsert_toml p2p_listen "\"${P2P_LISTEN}\""
   upsert_toml role "\"${ROLE}\""
   upsert_toml bootstrap "$(bootstrap_toml)"
+  upsert_toml p2p_allowlist "$(allowlist_toml)"
+  if [ -n "${RPC_READ_ADDR:-}" ]; then
+    upsert_toml rpc_read_addr "\"${RPC_READ_ADDR}\""
+  fi
 fi
 
 if [ "$ROLE" = "master" ] && [ -d /shared ] && [ -w /shared ]; then

@@ -1,0 +1,38 @@
+{
+  "title": "Ivory",
+  "uid": "ivory-metrics",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Head number",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [{ "expr": "ivory_head_number" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "RPC requests",
+      "gridPos": { "h": 8, "w": 12, "x": 6, "y": 0 },
+      "targets": [{ "expr": "rate(ivory_rpc_requests_total[1m])" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Txpool pending",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 4 },
+      "targets": [{ "expr": "ivory_txpool_pending" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "P2P peers",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 12 },
+      "targets": [{ "expr": "ivory_p2p_peers" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Block produce seconds",
+      "gridPos": { "h": 8, "w": 12, "x": 6, "y": 12 },
+      "targets": [{ "expr": "rate(ivory_block_produce_seconds_sum[1m]) / rate(ivory_block_produce_seconds_count[1m])" }]
+    }
+  ]
+}
