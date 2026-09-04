@@ -333,9 +333,9 @@ mod tests {
         let block = BlockProducer::new()
             .produce_block(params(&g, &pool, &exec, &poa(), miner(), &miner_key, 2))
             .unwrap();
-        let hash = store.insert_block(block).unwrap();
+        let hash = store.insert_block(block).unwrap().hash;
         assert_eq!(store.head(), Some(hash));
-        store.record_state(1, exec.state().clone());
-        assert!(store.state_at_block(1).is_some());
+        store.record_state(hash, exec.state().clone());
+        assert!(store.state_at(&hash).is_some());
     }
 }

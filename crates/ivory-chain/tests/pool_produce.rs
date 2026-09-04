@@ -98,7 +98,7 @@ fn pool_produce_insert() {
     }
     assert_eq!(pool.pending_count(), 0);
 
-    let hash = store.insert_block(block).unwrap();
+    let hash = store.insert_block(block).unwrap().hash;
     assert_eq!(store.head(), Some(hash));
     assert_eq!(store.get_block_by_number(1).unwrap().transactions.len(), 2);
     assert_eq!(exec.state().get_account(&from).unwrap().nonce, 2);

@@ -34,4 +34,10 @@ pub enum ChainError {
     /// Transaction execution failed while producing a block.
     #[error(transparent)]
     Execution(#[from] ExecutionError),
+    /// Header `state_root` does not match execution on the parent snapshot.
+    #[error("invalid state root")]
+    InvalidStateRoot,
+    /// Parent block is indexed but has no recorded post-state snapshot.
+    #[error("unknown parent state")]
+    UnknownParentState,
 }

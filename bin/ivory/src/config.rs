@@ -5,8 +5,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use ivory_consensus::{PoAConfig, Validator};
+use ivory_core::Account;
 use ivory_crypto::secret_from_bytes;
 use ivory_primitives::{Address, PublicKey, SecretKey, U256};
+use ivory_state::StateDB;
 use serde::{Deserialize, Serialize};
 
 /// Operator role: master may produce; slave only follows.
@@ -143,6 +145,21 @@ impl GenesisFile {
         }))
     }
 
+    /// State root of genesis alloc (Patricia account trie).
+    ///
+    /// # Errors
+    ///
+    /// Invalid address or balance.
+    pub fn alloc_state_root(&self) -> Result<ivory_primitives::H256> {
+        let state = StateDB::new();
+        for (addr, bal) in self.parsed_alloc()? {
+            let mut acc = Account::new();
+            acc.balance = bal;
+            state.set_account(addr, acc);
+        }
+        Ok(state.root_hash())
+    }
+
     /// Parsed alloc map.
     ///
     /// # Errors
@@ -259,6 +276,12 @@ pub fn init_datadir_with(root: &Path, opts: InitOpts) -> Result<DataPaths> {
         difficulty: ivory_primitives::U256::ZERO,
         extra_data: ivory_primitives::Bytes::new(),
     };
+    let alloc = HashMap::from([(addr.to_hex(), "1000000000000000000".into())]);
+    let mut funded = Account::new();
+    funded.balance = U256::from_u128(1_000_000_000_000_000_000);
+    let genesis_state = StateDB::new();
+    genesis_state.set_account(addr, funded);
+    header.state_root = genesis_state.root_hash();
     ivory_consensus::ConsensusEngine::seal_header(&poa, &mut header, &addr, &sk)?;
     let genesis = GenesisFile {
         timestamp: 1,
@@ -268,7 +291,7 @@ pub fn init_datadir_with(root: &Path, opts: InitOpts) -> Result<DataPaths> {
             public_key: pk.to_hex(),
         },
         extra_data: format!("0x{}", hex::encode(header.extra_data.as_slice())),
-        alloc: HashMap::from([(addr.to_hex(), "1000000000000000000".into())]),
+        alloc,
     };
     std::fs::write(
         &paths.genesis,

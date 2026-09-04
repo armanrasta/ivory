@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use ivory_chain::{BlockProducer, BlockStore, ProduceParams};
+use ivory_chain::{BlockProducer, BlockStore, ProduceParams, import_and_apply};
 use ivory_consensus::{ConsensusEngine, PoAConsensus};
 use ivory_core::{Account, Block, BlockHeader};
 use ivory_crypto::address_from_secret;
@@ -53,8 +53,7 @@ impl Drop for Node {
 /// Start networking, RPC, import loop, and optional block production.
 ///
 /// Canonical blocks are persisted under [`DataPaths::chain`] and replayed on
-/// restart. Fork/reorg updates the in-memory canonical head but does **not**
-/// roll back [`Executor`] state (follow-up, not this slice).
+/// restart. A reorg resets live executor state from the new-head snapshot.
 ///
 /// # Errors
 ///
@@ -83,12 +82,13 @@ pub async fn run_node(
     let persist = Arc::new(ChainPersist::open(&paths.chain)?);
     let store = Arc::new(BlockStore::new(poa.clone()));
     let genesis_block = genesis_block(&genesis)?;
+    let genesis_hash = genesis_block.hash();
     let loaded_height = persist.load_into(&store, &genesis_block)?;
     if loaded_height.is_none() {
         store.insert_genesis(genesis_block.clone())?;
         persist.persist_canonical(&store, &genesis_block)?;
     }
-    store.record_state(0, state.clone());
+    store.record_state(genesis_hash, state.fork());
 
     let pool = Arc::new(TransactionPool::new());
     let executor = Arc::new(Executor::new(state.clone()));
@@ -103,7 +103,7 @@ pub async fn run_node(
                     .execute_transaction(tx, &mut ctx)
                     .with_context(|| format!("replay tx in block {n}"))?;
             }
-            store.record_state(n, executor.state().clone());
+            store.record_state(block.hash(), executor.state().fork());
         }
     }
 
@@ -240,11 +240,15 @@ pub async fn run_node(
                         let Some(parent) = prod_store.head_block() else {
                             continue;
                         };
+                        let Some(parent_state) = prod_store.state_at(&parent.hash()) else {
+                            continue;
+                        };
+                        let trial_exec = Executor::new(parent_state);
                         let ts = parent.header.timestamp.saturating_add(1);
                         match producer.produce_block(ProduceParams {
                             parent: &parent,
                             pool: &prod_pool,
-                            executor: &prod_exec,
+                            executor: &trial_exec,
                             consensus: &consensus,
                             miner: local_addr,
                             miner_key: &key,
@@ -252,19 +256,21 @@ pub async fn run_node(
                             max_txs: 128,
                         }) {
                             Ok(block) => {
-                                for tx in &block.transactions {
-                                    prod_pool.remove(&tx.hash());
-                                }
-                                if prod_store.insert_block(block.clone()).is_ok() {
-                                    prod_store.record_state(
-                                        block.header.number,
-                                        prod_exec.state().clone(),
-                                    );
-                                    if let Err(e) = prod_persist.persist_canonical(&prod_store, &block)
-                                    {
-                                        tracing::warn!(error = %e, "persist produced block");
+                                match import_and_apply(
+                                    &prod_store,
+                                    prod_exec.state(),
+                                    &prod_pool,
+                                    block.clone(),
+                                ) {
+                                    Ok(_) => {
+                                        if let Err(e) =
+                                            prod_persist.persist_canonical(&prod_store, &block)
+                                        {
+                                            tracing::warn!(error = %e, "persist produced block");
+                                        }
+                                        let _ = prod_net.broadcast_block(block);
                                     }
-                                    let _ = prod_net.broadcast_block(block);
+                                    Err(e) => tracing::debug!(error = %e, "import produced block"),
                                 }
                             }
                             Err(e) => tracing::debug!(error = %e, "produce failed"),
@@ -299,7 +305,7 @@ fn genesis_block(genesis: &GenesisFile) -> Result<Block> {
             miner,
             gas_limit: genesis.gas_limit,
             gas_used: 0,
-            state_root: H256::ZERO,
+            state_root: genesis.alloc_state_root()?,
             transactions_root: H256::ZERO,
             receipts_root: H256::ZERO,
             difficulty: U256::ZERO,
@@ -328,15 +334,8 @@ fn import_block(
     orphans: &Mutex<HashMap<H256, Block>>,
     block: Block,
 ) {
-    match store.insert_block(block.clone()) {
+    match import_and_apply(store, executor.state(), pool, block.clone()) {
         Ok(_) => {
-            // Execute onto live state. Reorgs do not roll this back.
-            let mut ctx = ExecutionContext::new(block.header.number, block.header.timestamp);
-            for tx in &block.transactions {
-                let _ = executor.execute_transaction(tx, &mut ctx);
-                pool.remove(&tx.hash());
-            }
-            store.record_state(block.header.number, executor.state().clone());
             if let Err(e) = persist.persist_canonical(store, &block) {
                 tracing::warn!(error = %e, "persist imported block");
             }
@@ -354,7 +353,8 @@ fn import_block(
                 pending = orphans.lock().unwrap();
             }
         }
-        Err(ivory_chain::ChainError::UnknownParent) => {
+        Err(ivory_chain::ChainError::UnknownParent)
+        | Err(ivory_chain::ChainError::UnknownParentState) => {
             network.request_block(block.header.parent_hash).ok();
             orphans.lock().unwrap().insert(block.hash(), block);
         }

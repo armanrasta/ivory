@@ -205,6 +205,129 @@ mod tests {
     }
 
     #[test]
+    fn persist_reorg_reload_matches_replay() {
+        use ivory_chain::{BlockProducer, ProduceParams, import_and_apply};
+        use ivory_core::Account;
+        use ivory_crypto::signed_transfer;
+        use ivory_executor::Executor;
+        use ivory_state::StateDB;
+        use ivory_txpool::{TransactionPool, TxOrigin};
+
+        let (sk, _, miner) = keypair_from_byte(9);
+        let poa = PoAConsensus::from_secret(&sk).unwrap();
+        let from = keypair_from_byte(1).2;
+        let to_a = keypair_from_byte(2).2;
+        let to_b = keypair_from_byte(3).2;
+
+        let genesis_state = StateDB::new();
+        let mut funded = Account::new();
+        funded.balance = U256::from(1_000_000u64);
+        genesis_state.set_account(from, funded);
+
+        let mut header = BlockHeader {
+            number: 0,
+            parent_hash: H256::ZERO,
+            timestamp: 1,
+            miner,
+            gas_limit: 30_000_000,
+            gas_used: 0,
+            state_root: genesis_state.root_hash(),
+            transactions_root: H256::ZERO,
+            receipts_root: H256::ZERO,
+            difficulty: U256::ZERO,
+            extra_data: Bytes::new(),
+        };
+        poa.seal_header(&mut header, &miner, &sk).unwrap();
+        let genesis = Block {
+            header,
+            transactions: Vec::new(),
+            receipts: Vec::new(),
+        };
+
+        let store = BlockStore::new(poa.clone());
+        store.insert_genesis(genesis.clone()).unwrap();
+        store.record_state(genesis.hash(), genesis_state.fork());
+        let live = genesis_state.fork();
+        let pool = TransactionPool::new();
+
+        let produce = |parent: &Block, parent_state: StateDB, to, ts| {
+            let p = TransactionPool::new();
+            p.add_transaction(
+                signed_transfer(&keypair_from_byte(1).0, to, 0, U256::from(10u64), 21_000),
+                TxOrigin::Local,
+            )
+            .unwrap();
+            let exec = Executor::new(parent_state);
+            BlockProducer::new()
+                .produce_block(ProduceParams {
+                    parent,
+                    pool: &p,
+                    executor: &exec,
+                    consensus: &poa,
+                    miner,
+                    miner_key: &sk,
+                    timestamp: ts,
+                    max_txs: 8,
+                })
+                .unwrap()
+        };
+
+        let block_a = produce(&genesis, store.state_at(&genesis.hash()).unwrap(), to_a, 10);
+        let block_b = produce(&genesis, store.state_at(&genesis.hash()).unwrap(), to_b, 11);
+        import_and_apply(&store, &live, &pool, block_a).unwrap();
+        import_and_apply(&store, &live, &pool, block_b.clone()).unwrap();
+
+        let empty = TransactionPool::new();
+        let exec = Executor::new(store.state_at(&block_b.hash()).unwrap());
+        let block_b2 = BlockProducer::new()
+            .produce_block(ProduceParams {
+                parent: &block_b,
+                pool: &empty,
+                executor: &exec,
+                consensus: &poa,
+                miner,
+                miner_key: &sk,
+                timestamp: 12,
+                max_txs: 8,
+            })
+            .unwrap();
+        import_and_apply(&store, &live, &pool, block_b2.clone()).unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let persist = ChainPersist::open(dir.path()).unwrap();
+        persist.persist_canonical(&store, &block_b2).unwrap();
+        drop(persist);
+
+        let persist = ChainPersist::open(dir.path()).unwrap();
+        let store2 = BlockStore::new(poa);
+        persist.load_into(&store2, &genesis).unwrap();
+        let replay = genesis_state.fork();
+        let exec = Executor::new(replay.clone());
+        let head_n = store2.head_block().unwrap().header.number;
+        for n in 1..=head_n {
+            let block = store2.get_block_by_number(n).unwrap();
+            let mut ctx =
+                ivory_executor::ExecutionContext::new(block.header.number, block.header.timestamp);
+            for tx in &block.transactions {
+                exec.execute_transaction(tx, &mut ctx).unwrap();
+            }
+        }
+        assert_eq!(
+            replay.get_account(&to_b).map(|a| a.balance),
+            live.get_account(&to_b).map(|a| a.balance)
+        );
+        assert_eq!(
+            replay.get_account(&from).unwrap().nonce,
+            live.get_account(&from).unwrap().nonce
+        );
+        assert!(
+            replay
+                .get_account(&to_a)
+                .is_none_or(|a| a.balance.is_zero())
+        );
+    }
+
+    #[test]
     fn genesis_mismatch_errors() {
         let dir = tempfile::tempdir().unwrap();
         let persist = ChainPersist::open(dir.path()).unwrap();

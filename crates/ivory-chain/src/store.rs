@@ -21,13 +21,28 @@ pub struct TxLocation {
     pub index: usize,
 }
 
-/// Indexed blocks plus optional per-height state snapshots.
+/// Result of inserting a block into [`BlockStore`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InsertOutcome {
+    /// Hash of the inserted block.
+    pub hash: H256,
+    /// Canonical head before this insert.
+    pub old_head: Option<H256>,
+    /// Canonical head after this insert.
+    pub new_head: H256,
+    /// Common ancestor of `old_head` and `new_head` (the new block if first).
+    pub ancestor: H256,
+    /// Whether the canonical head moved.
+    pub head_changed: bool,
+}
+
+/// Indexed blocks plus optional per-block state snapshots.
 pub struct BlockStore {
     by_hash: RwLock<HashMap<H256, Block>>,
     /// Canonical hash at each height (longest-chain view).
     by_number: RwLock<HashMap<u64, H256>>,
     head: RwLock<Option<H256>>,
-    snapshots: RwLock<HashMap<u64, StateDB>>,
+    snapshots: RwLock<HashMap<H256, StateDB>>,
     tx_index: RwLock<HashMap<H256, TxLocation>>,
     consensus: PoAConsensus,
 }
@@ -81,15 +96,45 @@ impl BlockStore {
         Some((tx, loc))
     }
 
-    /// Snapshot recorded at `number` (if the producer stored one).
+    /// Isolated snapshot recorded after `hash` was applied.
     #[must_use]
-    pub fn state_at_block(&self, number: u64) -> Option<StateDB> {
-        self.snapshots.read().get(&number).cloned()
+    pub fn state_at(&self, hash: &H256) -> Option<StateDB> {
+        self.snapshots.read().get(hash).map(StateDB::fork)
     }
 
-    /// Record a cheap `Arc` clone of `state` at `number`.
-    pub fn record_state(&self, number: u64, state: StateDB) {
-        self.snapshots.write().insert(number, state);
+    /// Store a deep copy of `state` keyed by block hash.
+    pub fn record_state(&self, hash: H256, state: StateDB) {
+        self.snapshots.write().insert(hash, state.fork());
+    }
+
+    /// Genesis-to-tip hashes for `tip` (parent walk).
+    #[must_use]
+    pub fn chain_from(&self, tip: H256) -> Vec<H256> {
+        let mut path = Vec::new();
+        let mut cur = Some(tip);
+        let by_hash = self.by_hash.read();
+        while let Some(h) = cur {
+            let Some(block) = by_hash.get(&h) else {
+                break;
+            };
+            path.push(h);
+            if block.header.number == 0 {
+                break;
+            }
+            cur = Some(block.header.parent_hash);
+        }
+        path.reverse();
+        path
+    }
+
+    /// Deepest block that is an ancestor of both tips.
+    #[must_use]
+    pub fn common_ancestor(&self, a: H256, b: H256) -> Option<H256> {
+        let sa: std::collections::HashSet<H256> = self.chain_from(a).into_iter().collect();
+        self.chain_from(b)
+            .into_iter()
+            .rev()
+            .find(|h| sa.contains(h))
     }
 
     /// Insert genesis (`number == 0`, `parent_hash == ZERO`).
@@ -97,7 +142,7 @@ impl BlockStore {
     /// # Errors
     ///
     /// [`ChainError::InvalidGenesis`], consensus, or duplicate hash.
-    pub fn insert_genesis(&self, block: Block) -> Result<H256, ChainError> {
+    pub fn insert_genesis(&self, block: Block) -> Result<InsertOutcome, ChainError> {
         if block.header.number != 0 || block.header.parent_hash != H256::ZERO {
             return Err(ChainError::InvalidGenesis);
         }
@@ -114,7 +159,7 @@ impl BlockStore {
     /// # Errors
     ///
     /// Unknown parent, wrong number, duplicate, consensus, or [`ivory_core::Block::validate`].
-    pub fn insert_block(&self, block: Block) -> Result<H256, ChainError> {
+    pub fn insert_block(&self, block: Block) -> Result<InsertOutcome, ChainError> {
         if block.header.number == 0 {
             return self.insert_genesis(block);
         }
@@ -135,28 +180,57 @@ impl BlockStore {
         self.insert_validated(block)
     }
 
-    fn insert_validated(&self, block: Block) -> Result<H256, ChainError> {
+    fn insert_validated(&self, block: Block) -> Result<InsertOutcome, ChainError> {
         let hash = block.hash();
         if self.by_hash.read().contains_key(&hash) {
             return Err(ChainError::DuplicateBlock);
         }
         let number = block.header.number;
-        {
-            let mut tx_index = self.tx_index.write();
+        let old_head = *self.head.read();
+        self.by_hash.write().insert(hash, block);
+        self.maybe_update_canonical(hash, number);
+        let new_head = self.head().expect("head after insert");
+        let head_changed = old_head != Some(new_head);
+        let ancestor = match old_head {
+            None => hash,
+            Some(old) if !head_changed => old,
+            Some(old) => self.common_ancestor(old, new_head).unwrap_or(hash),
+        };
+        if head_changed {
+            self.rebuild_tx_index();
+        }
+        Ok(InsertOutcome {
+            hash,
+            old_head,
+            new_head,
+            ancestor,
+            head_changed,
+        })
+    }
+
+    fn rebuild_tx_index(&self) {
+        let mut idx = HashMap::new();
+        let Some(head) = self.head_block() else {
+            *self.tx_index.write() = idx;
+            return;
+        };
+        for n in 0..=head.header.number {
+            let Some(block) = self.get_block_by_number(n) else {
+                continue;
+            };
+            let hash = block.hash();
             for (index, tx) in block.transactions.iter().enumerate() {
-                tx_index.insert(
+                idx.insert(
                     tx.hash(),
                     TxLocation {
                         block_hash: hash,
-                        block_number: number,
+                        block_number: n,
                         index,
                     },
                 );
             }
         }
-        self.by_hash.write().insert(hash, block);
-        self.maybe_update_canonical(hash, number);
-        Ok(hash)
+        *self.tx_index.write() = idx;
     }
 
     fn maybe_update_canonical(&self, hash: H256, number: u64) {
@@ -260,7 +334,7 @@ mod tests {
     fn insert_genesis_sets_head() {
         let store = BlockStore::new(poa());
         let g = genesis();
-        let hash = store.insert_genesis(g.clone()).unwrap();
+        let hash = store.insert_genesis(g.clone()).unwrap().hash;
         assert_eq!(store.head(), Some(hash));
         assert_eq!(store.head_block().unwrap().hash(), hash);
         assert_eq!(store.get_block_by_number(0).unwrap().hash(), hash);
@@ -293,11 +367,11 @@ mod tests {
     fn linear_chain_three_blocks() {
         let store = BlockStore::new(poa());
         let g = genesis();
-        let h0 = store.insert_genesis(g.clone()).unwrap();
+        let h0 = store.insert_genesis(g.clone()).unwrap().hash;
         let b1 = blk(1, h0, 2);
-        let h1 = store.insert_block(b1).unwrap();
+        let h1 = store.insert_block(b1).unwrap().hash;
         let b2 = blk(2, h1, 3);
-        let h2 = store.insert_block(b2).unwrap();
+        let h2 = store.insert_block(b2).unwrap().hash;
         assert_eq!(store.head(), Some(h2));
         assert_eq!(store.get_block_by_number(0).unwrap().hash(), h0);
         assert_eq!(store.get_block_by_number(1).unwrap().hash(), h1);
@@ -323,7 +397,7 @@ mod tests {
     #[test]
     fn wrong_number_rejected() {
         let store = BlockStore::new(poa());
-        let h0 = store.insert_genesis(genesis()).unwrap();
+        let h0 = store.insert_genesis(genesis()).unwrap().hash;
         let bad = blk(2, h0, 2);
         assert_eq!(
             store.insert_block(bad),
@@ -337,22 +411,22 @@ mod tests {
     #[test]
     fn insert_block_zero_routes_to_genesis() {
         let store = BlockStore::new(poa());
-        let hash = store.insert_block(genesis()).unwrap();
+        let hash = store.insert_block(genesis()).unwrap().hash;
         assert_eq!(store.head(), Some(hash));
     }
 
     #[test]
     fn fork_longer_branch_becomes_head() {
         let store = BlockStore::new(poa());
-        let h0 = store.insert_genesis(genesis()).unwrap();
+        let h0 = store.insert_genesis(genesis()).unwrap().hash;
         let a1 = blk(1, h0, 10);
-        let ha1 = store.insert_block(a1).unwrap();
+        let ha1 = store.insert_block(a1).unwrap().hash;
         // Side branch from genesis with a different timestamp so hashes differ.
         let b1 = blk(1, h0, 11);
-        let hb1 = store.insert_block(b1).unwrap();
+        let hb1 = store.insert_block(b1).unwrap().hash;
         assert_ne!(ha1, hb1);
         let b2 = blk(2, hb1, 12);
-        let hb2 = store.insert_block(b2).unwrap();
+        let hb2 = store.insert_block(b2).unwrap().hash;
         assert_eq!(store.head(), Some(hb2));
         assert_eq!(store.get_block_by_number(1).unwrap().hash(), hb1);
         assert_eq!(store.get_block_by_number(2).unwrap().hash(), hb2);
@@ -361,7 +435,7 @@ mod tests {
     #[test]
     fn equal_height_prefers_smaller_hash() {
         let store = BlockStore::new(poa());
-        let h0 = store.insert_genesis(genesis()).unwrap();
+        let h0 = store.insert_genesis(genesis()).unwrap().hash;
         let a = blk(1, h0, 10);
         let b = blk(1, h0, 11);
         let ha = a.hash();
@@ -379,16 +453,29 @@ mod tests {
         assert!(store.get_block(&H256::ZERO).is_none());
         assert!(store.get_block_by_number(0).is_none());
         assert!(store.head().is_none());
-        assert!(store.state_at_block(0).is_none());
+        assert!(store.state_at(&H256::ZERO).is_none());
     }
 
     #[test]
     fn record_state_snapshot() {
         let store = BlockStore::new(poa());
-        store.insert_genesis(genesis()).unwrap();
+        let hash = store.insert_genesis(genesis()).unwrap().hash;
         let db = StateDB::new();
-        store.record_state(0, db.clone());
-        assert!(store.state_at_block(0).is_some());
+        store.record_state(hash, db);
+        assert!(store.state_at(&hash).is_some());
+    }
+
+    #[test]
+    fn insert_reports_reorg_ancestor() {
+        let store = BlockStore::new(poa());
+        let h0 = store.insert_genesis(genesis()).unwrap().hash;
+        let a1 = store.insert_block(blk(1, h0, 10)).unwrap();
+        let b1 = store.insert_block(blk(1, h0, 11)).unwrap();
+        let b2 = store.insert_block(blk(2, b1.hash, 12)).unwrap();
+        assert!(b2.head_changed);
+        assert_eq!(b2.old_head, Some(a1.hash));
+        assert_eq!(b2.new_head, b2.hash);
+        assert_eq!(b2.ancestor, h0);
     }
 
     #[test]
