@@ -1,6 +1,7 @@
 //! # Ivory VM
 //!
-//! wasmi interpreter with `env.storage_get` / `env.storage_set` / `env.emit_log`.
+//! wasmi interpreter with `env.storage_get` / `env.storage_set` / `env.emit_log`
+//! / `env.calldata_len` / `env.calldata_at`.
 
 pub mod error;
 pub mod vm;
@@ -38,7 +39,7 @@ mod tests {
             )"#,
         );
         let out = WasmVm::new()
-            .execute(&wasm, &StateDB::new(), addr(), 0)
+            .execute(&wasm, &StateDB::new(), addr(), 0, &[])
             .unwrap();
         assert!(out.success);
         assert_eq!(out.return_value, Some(42));
@@ -47,7 +48,7 @@ mod tests {
     #[test]
     fn invalid_wasm_errors() {
         let err = WasmVm::new()
-            .execute(&[0x00, 0x01, 0x02], &StateDB::new(), addr(), 0)
+            .execute(&[0x00, 0x01, 0x02], &StateDB::new(), addr(), 0, &[])
             .unwrap_err();
         assert!(matches!(err, VmError::InvalidModule(_)));
     }
@@ -55,7 +56,7 @@ mod tests {
     #[test]
     fn empty_bytes_invalid() {
         assert!(matches!(
-            WasmVm::new().execute(&[], &StateDB::new(), addr(), 0),
+            WasmVm::new().execute(&[], &StateDB::new(), addr(), 0, &[]),
             Err(VmError::InvalidModule(_))
         ));
     }
@@ -64,7 +65,7 @@ mod tests {
     fn missing_call_export_succeeds() {
         let wasm = wat_to_wasm(r#"(module (func (export "other") (result i32) i32.const 1))"#);
         let out = WasmVm::new()
-            .execute(&wasm, &StateDB::new(), addr(), 0)
+            .execute(&wasm, &StateDB::new(), addr(), 0, &[])
             .unwrap();
         assert!(out.success);
         assert_eq!(out.return_value, None);
@@ -74,7 +75,7 @@ mod tests {
     fn call_void_export() {
         let wasm = wat_to_wasm(r#"(module (func (export "call")))"#);
         let out = WasmVm::new()
-            .execute(&wasm, &StateDB::new(), addr(), 0)
+            .execute(&wasm, &StateDB::new(), addr(), 0, &[])
             .unwrap();
         assert!(out.success);
         assert_eq!(out.return_value, None);
@@ -90,7 +91,7 @@ mod tests {
             )"#,
         );
         assert!(matches!(
-            WasmVm::new().execute(&wasm, &StateDB::new(), addr(), 0),
+            WasmVm::new().execute(&wasm, &StateDB::new(), addr(), 0, &[]),
             Err(VmError::Trap(_))
         ));
     }
@@ -108,7 +109,7 @@ mod tests {
             )"#,
         );
         let out = WasmVm::new()
-            .execute(&wasm, &StateDB::new(), addr(), 0)
+            .execute(&wasm, &StateDB::new(), addr(), 0, &[])
             .unwrap();
         assert_eq!(out.return_value, Some(0));
     }
@@ -130,7 +131,9 @@ mod tests {
             )"#,
         );
         let state = StateDB::new();
-        let out = WasmVm::new().execute(&wasm, &state, addr(), 0).unwrap();
+        let out = WasmVm::new()
+            .execute(&wasm, &state, addr(), 0, &[])
+            .unwrap();
         assert_eq!(out.return_value, Some(99));
         let mut key = [0u8; 32];
         key[31] = 1;
@@ -153,7 +156,9 @@ mod tests {
             )"#,
         );
         let state = StateDB::new();
-        WasmVm::new().execute(&wasm, &state, addr(), 0).unwrap();
+        WasmVm::new()
+            .execute(&wasm, &state, addr(), 0, &[])
+            .unwrap();
         let other = Address::from_bytes([8u8; 20]);
         assert_eq!(
             state.get_storage(&other, &ivory_primitives::H256::ZERO),
@@ -175,7 +180,7 @@ mod tests {
             )"#,
         );
         assert!(matches!(
-            WasmVm::new().execute(&wasm, &StateDB::new(), addr(), 0),
+            WasmVm::new().execute(&wasm, &StateDB::new(), addr(), 0, &[]),
             Err(VmError::Export(_))
         ));
     }
@@ -191,7 +196,7 @@ mod tests {
             )"#,
         );
         assert!(matches!(
-            WasmVm::new().execute(&wasm, &StateDB::new(), addr(), 0),
+            WasmVm::new().execute(&wasm, &StateDB::new(), addr(), 0, &[]),
             Err(VmError::Instantiate(_))
         ));
     }
@@ -208,7 +213,7 @@ mod tests {
             )"#,
         );
         let out = WasmVm::new()
-            .execute(&wasm, &StateDB::new(), addr(), 50_000)
+            .execute(&wasm, &StateDB::new(), addr(), 50_000, &[])
             .unwrap();
         assert_eq!(out.logs.len(), 1);
         assert_eq!(out.logs[0].address, addr());
@@ -219,5 +224,23 @@ mod tests {
             ivory_primitives::H256::from_bytes(topic)
         );
         assert!(out.gas_left < 50_000);
+    }
+
+    #[test]
+    fn calldata_first_byte() {
+        let wasm = wat_to_wasm(
+            r#"(module
+              (import "env" "calldata_len" (func $len (result i32)))
+              (import "env" "calldata_at" (func $at (param i32) (result i32)))
+              (func (export "call") (result i32)
+                i32.const 0
+                call $at
+              )
+            )"#,
+        );
+        let out = WasmVm::new()
+            .execute(&wasm, &StateDB::new(), addr(), 0, &[0x2a, 0x00])
+            .unwrap();
+        assert_eq!(out.return_value, Some(0x2a));
     }
 }

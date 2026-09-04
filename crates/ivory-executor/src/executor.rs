@@ -164,8 +164,7 @@ impl Executor {
     /// Simulate a call or CREATE on `self.state` (caller should [`StateDB::fork`]).
     ///
     /// Ignores nonce and `gas * gas_price`. Transfers `value` when the sender
-    /// can cover it. WASM `data` is unused by the VM (protocol `call` has no
-    /// calldata).
+    /// can cover it. WASM `data` is exposed as `env.calldata_*`.
     ///
     /// # Errors
     ///

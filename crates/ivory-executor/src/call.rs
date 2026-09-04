@@ -110,7 +110,7 @@ pub fn execute_call(
                 return Ok(CallResult::empty(true, 0));
             }
             let out = WasmVm::new()
-                .execute(&code, state, to, gas_limit)
+                .execute(&code, state, to, gas_limit, input.data.as_slice())
                 .map_err(|e| ExecutionError::Vm(e.to_string()))?;
             let gas_used = gas_limit.saturating_sub(out.gas_left);
             let output = out

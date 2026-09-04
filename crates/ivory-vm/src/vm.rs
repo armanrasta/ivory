@@ -24,6 +24,7 @@ struct Host {
     state: StateDB,
     address: Address,
     logs: Vec<Log>,
+    calldata: Vec<u8>,
 }
 
 fn slot_key(slot: i32) -> H256 {
@@ -74,6 +75,7 @@ impl WasmVm {
         state: &StateDB,
         address: Address,
         gas_limit: u64,
+        input: &[u8],
     ) -> Result<VmOutput, VmError> {
         let fuel = if gas_limit == 0 {
             10_000_000
@@ -88,6 +90,7 @@ impl WasmVm {
                 state: state.clone(),
                 address,
                 logs: Vec::new(),
+                calldata: input.to_vec(),
             },
         );
         store
@@ -131,6 +134,28 @@ impl WasmVm {
                         topics: vec![topic_from_i32(topic)],
                         data: Bytes::new(),
                     });
+                },
+            )
+            .map_err(|e| VmError::Instantiate(e.to_string()))?;
+
+        linker
+            .func_wrap("env", "calldata_len", |caller: Caller<'_, Host>| -> i32 {
+                caller.data().calldata.len() as i32
+            })
+            .map_err(|e| VmError::Instantiate(e.to_string()))?;
+
+        linker
+            .func_wrap(
+                "env",
+                "calldata_at",
+                |caller: Caller<'_, Host>, index: i32| -> i32 {
+                    caller
+                        .data()
+                        .calldata
+                        .get(index as usize)
+                        .copied()
+                        .map(i32::from)
+                        .unwrap_or(0)
                 },
             )
             .map_err(|e| VmError::Instantiate(e.to_string()))?;
