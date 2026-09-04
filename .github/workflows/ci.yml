@@ -120,3 +120,85 @@ jobs:
           key: test-${{ matrix.block }}
       - name: cargo test
         run: cargo test --verbose ${{ matrix.packages }} ${{ matrix.extra }}
+
+  coverage-cheap:
+    name: coverage (core, crypto, state)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: coverage-cheap
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - name: llvm-cov
+        run: >
+          cargo llvm-cov
+          -p ivory-core -p ivory-crypto -p ivory-state
+          --lcov --output-path lcov.info
+          --html --output-dir target/llvm-cov/html
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-cheap
+          path: |
+            lcov.info
+            target/llvm-cov/html
+
+  coverage-exec:
+    name: coverage (executor, txpool, vm)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: coverage-exec
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - name: llvm-cov
+        run: >
+          cargo llvm-cov
+          -p ivory-executor -p ivory-txpool -p ivory-vm
+          --lcov --output-path lcov.info
+          --html --output-dir target/llvm-cov/html
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-exec
+          path: |
+            lcov.info
+            target/llvm-cov/html
+
+  pytest:
+    name: pytest (sdk/python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install and test
+        working-directory: sdk/python
+        run: |
+          python -m pip install -U pip
+          pip install -e ".[dev]"
+          pytest -q
