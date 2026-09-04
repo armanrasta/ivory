@@ -6,7 +6,7 @@ use std::sync::Arc;
 use axum::extract::Request;
 use axum::extract::State;
 use axum::extract::ws::WebSocketUpgrade;
-use axum::http::{HeaderValue, Method, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -85,6 +85,7 @@ pub fn router_with_config(handler: RpcHandler, cfg: RpcHttpConfig) -> Router {
         .route("/ui/", get(panel_ui))
         .route("/livez", get(livez))
         .route("/readyz", get(readyz))
+        .route("/metrics", get(metrics))
         .layer(middleware::from_fn_with_state(Arc::clone(&state), auth_mw))
         .with_state(state);
     if let Some(cors) = cors_layer(&cfg.cors) {
@@ -122,6 +123,25 @@ async fn livez() -> impl IntoResponse {
     (StatusCode::OK, "ok")
 }
 
+async fn metrics(State(state): State<Arc<RpcState>>) -> impl IntoResponse {
+    let ctx = state.handler.context();
+    if let Some(head) = ctx.store.head_block() {
+        ctx.metrics
+            .set_head(head.header.number, head.header.timestamp);
+    }
+    ctx.metrics
+        .set_txpool_pending(ctx.pool.pending_count() as u64);
+    ctx.metrics
+        .set_p2p_peers(ctx.peers.load(std::sync::atomic::Ordering::Relaxed) as u64);
+    (
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        ctx.metrics.encode(),
+    )
+}
+
 async fn readyz(State(state): State<Arc<RpcState>>) -> impl IntoResponse {
     match state.handler.handle("eth_blockNumber", json!([])) {
         Ok(_) => (StatusCode::OK, "ready").into_response(),
@@ -135,7 +155,7 @@ async fn auth_mw(
     next: Next,
 ) -> impl IntoResponse {
     let path = request.uri().path();
-    if path == "/livez" || path == "/readyz" {
+    if path == "/livez" || path == "/readyz" || path == "/metrics" {
         return next.run(request).await;
     }
     if let Some(expected) = &state.token {
@@ -177,6 +197,7 @@ pub async fn serve(handler: RpcHandler, addr: SocketAddr) -> Result<(), std::io:
 
 async fn http_jsonrpc(
     State(state): State<Arc<RpcState>>,
+    headers: HeaderMap,
     body: Result<Json<Value>, axum::extract::rejection::JsonRejection>,
 ) -> impl IntoResponse {
     let Json(value) = match body {
@@ -203,6 +224,12 @@ async fn http_jsonrpc(
             );
         }
     };
+    let source_ip = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .or_else(|| headers.get("x-real-ip").and_then(|v| v.to_str().ok()))
+        .unwrap_or("unknown");
+    tracing::info!(method = %request.method, source_ip, "rpc");
     let response = dispatch(&state, request);
     (StatusCode::OK, Json(response))
 }

@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 use crate::context::{RpcContext, RpcEvent};
 use crate::error::RpcError;
+use crate::jsonrpc::JsonRpcError;
 use crate::types::{BlockNumberOrTag, BlockTag, TransactionRequest};
 
 /// Dispatches `eth_*` methods against [`RpcContext`].
@@ -38,7 +39,15 @@ impl RpcHandler {
     ///
     /// [`RpcError`] for unknown methods, bad params, or missing objects.
     pub fn handle(&self, method: &str, params: Value) -> Result<Value, RpcError> {
-        match method {
+        if let Some(allow) = &self.ctx.allow_methods
+            && !allow.iter().any(|m| m == method)
+        {
+            let err = RpcError::MethodNotFound(method.to_string());
+            self.ctx.metrics.rpc_request(method);
+            self.ctx.metrics.rpc_error(method, -32601);
+            return Err(err);
+        }
+        let result = match method {
             "eth_chainId" => self.chain_id(),
             "eth_blockNumber" => self.block_number(),
             "eth_getBalance" => self.get_balance(params),
@@ -52,11 +61,22 @@ impl RpcHandler {
             "eth_sendRawTransaction" => self.send_raw_transaction(params),
             "eth_call" => self.eth_call(params),
             "eth_estimateGas" => self.eth_estimate_gas(params),
+            "eth_getLogs" => self.eth_get_logs(params),
+            "eth_getProof" => Err(RpcError::Server(
+                "eth_getProof needs persisted Patricia nodes; see docs/rpc.md".into(),
+            )),
             "eth_subscribe" | "eth_unsubscribe" => Err(RpcError::Server("WebSocket only".into())),
             "ivory_nodeInfo" => self.node_info(),
             "ivory_listContracts" => self.list_contracts(),
+            "ivory_getHeaderByNumber" => self.get_header_by_number(params),
             other => Err(RpcError::MethodNotFound(other.to_string())),
+        };
+        self.ctx.metrics.rpc_request(method);
+        if let Err(err) = &result {
+            let code = JsonRpcError::from(err.clone()).code;
+            self.ctx.metrics.rpc_error(method, code);
         }
+        result
     }
 
     fn chain_id(&self) -> Result<Value, RpcError> {
@@ -292,6 +312,74 @@ impl RpcHandler {
         Ok(Value::Array(out))
     }
 
+    fn get_header_by_number(&self, params: Value) -> Result<Value, RpcError> {
+        let tag = parse_block_id_at(&params, 0)?;
+        let block = self.block_by_tag(tag).ok_or(RpcError::BlockNotFound)?;
+        Ok(header_to_json(&block))
+    }
+
+    fn eth_get_logs(&self, params: Value) -> Result<Value, RpcError> {
+        let arr = params_array(&params)?;
+        let filter = arr
+            .first()
+            .and_then(Value::as_object)
+            .ok_or_else(|| RpcError::InvalidParams("expected filter object".into()))?;
+        let head = self
+            .ctx
+            .store
+            .head_block()
+            .ok_or(RpcError::BlockNotFound)?
+            .header
+            .number;
+        let from = match filter.get("fromBlock").map(parse_block_id).transpose()? {
+            Some(BlockNumberOrTag::Number(n)) => n,
+            Some(tag) => self.block_by_tag(tag).map(|b| b.header.number).unwrap_or(0),
+            None => 0,
+        };
+        let to = match filter.get("toBlock").map(parse_block_id).transpose()? {
+            Some(BlockNumberOrTag::Number(n)) => n,
+            Some(tag) => self
+                .block_by_tag(tag)
+                .map(|b| b.header.number)
+                .unwrap_or(head),
+            None => head,
+        };
+        if to < from {
+            return Err(RpcError::InvalidParams("toBlock < fromBlock".into()));
+        }
+        if to.saturating_sub(from) > 1000 {
+            return Err(RpcError::InvalidParams(
+                "log scan exceeds 1000 blocks".into(),
+            ));
+        }
+        let addrs = parse_log_addresses(filter.get("address"))?;
+        let mut out = Vec::new();
+        for n in from..=to {
+            let Some(block) = self.ctx.store.get_block_by_number(n) else {
+                continue;
+            };
+            let hash = block.hash();
+            for (tx_idx, receipt) in block.receipts.iter().enumerate() {
+                for (log_idx, log) in receipt.logs.iter().enumerate() {
+                    if !addrs.is_empty() && !addrs.contains(&log.address) {
+                        continue;
+                    }
+                    out.push(json!({
+                        "address": log.address.to_hex(),
+                        "topics": log.topics.iter().map(|t| t.to_hex()).collect::<Vec<_>>(),
+                        "data": format!("0x{}", hex::encode(log.data.as_slice())),
+                        "blockNumber": encode_qty(n),
+                        "blockHash": hash.to_hex(),
+                        "transactionHash": receipt.tx_hash.to_hex(),
+                        "transactionIndex": encode_qty(tx_idx as u64),
+                        "logIndex": encode_qty(log_idx as u64),
+                    }));
+                }
+            }
+        }
+        Ok(Value::Array(out))
+    }
+
     fn block_by_tag(&self, tag: BlockNumberOrTag) -> Option<Block> {
         match tag {
             BlockNumberOrTag::Number(n) => self.ctx.store.get_block_by_number(n),
@@ -310,6 +398,48 @@ fn encode_qty(n: u64) -> String {
     } else {
         format!("0x{n:x}")
     }
+}
+
+fn header_to_json(block: &Block) -> Value {
+    json!({
+        "number": encode_qty(block.header.number),
+        "hash": block.hash().to_hex(),
+        "parentHash": block.header.parent_hash.to_hex(),
+        "miner": block.header.miner.to_hex(),
+        "timestamp": encode_qty(block.header.timestamp),
+        "gasLimit": encode_qty(block.header.gas_limit),
+        "gasUsed": encode_qty(block.header.gas_used),
+        "stateRoot": block.header.state_root.to_hex(),
+        "transactionsRoot": block.header.transactions_root.to_hex(),
+        "receiptsRoot": block.header.receipts_root.to_hex(),
+        "difficulty": block.header.difficulty.to_hex(),
+        "extraData": format!("0x{}", hex::encode(block.header.extra_data.as_slice())),
+    })
+}
+
+fn parse_log_addresses(v: Option<&Value>) -> Result<Vec<Address>, RpcError> {
+    let Some(v) = v else {
+        return Ok(Vec::new());
+    };
+    if v.is_null() {
+        return Ok(Vec::new());
+    }
+    if let Some(s) = v.as_str() {
+        return Ok(vec![
+            Address::from_hex(s).map_err(|e| RpcError::InvalidParams(e.to_string()))?,
+        ]);
+    }
+    let arr = v
+        .as_array()
+        .ok_or_else(|| RpcError::InvalidParams("address must be hex or array".into()))?;
+    arr.iter()
+        .map(|x| {
+            let s = x
+                .as_str()
+                .ok_or_else(|| RpcError::InvalidParams("address entry must be hex".into()))?;
+            Address::from_hex(s).map_err(|e| RpcError::InvalidParams(e.to_string()))
+        })
+        .collect()
 }
 
 fn block_to_json(block: &Block) -> Value {

@@ -10,6 +10,8 @@ use ivory_state::StateDB;
 use ivory_txpool::TransactionPool;
 use tokio::sync::broadcast;
 
+use crate::metrics::IvoryMetrics;
+
 /// Producer (genesis validator key) or follower (bootstrap peer).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum NodeRole {
@@ -74,9 +76,32 @@ pub enum RpcEvent {
         /// Transaction hash.
         hash: H256,
     },
+    /// Logs from a newly imported head (WS `logs`).
+    NewLogs {
+        /// Receipt logs in that block.
+        logs: Vec<ivory_core::Log>,
+        /// Block number.
+        block_number: u64,
+        /// Block hash.
+        block_hash: H256,
+    },
 }
 
 impl RpcEvent {
+    /// Build a `logs` payload from a canonical block’s receipts.
+    #[must_use]
+    pub fn new_logs(block: &Block) -> Self {
+        let mut logs = Vec::new();
+        for receipt in &block.receipts {
+            logs.extend(receipt.logs.iter().cloned());
+        }
+        Self::NewLogs {
+            logs,
+            block_number: block.header.number,
+            block_hash: block.hash(),
+        }
+    }
+
     /// Build a `newHeads` payload from a canonical block.
     #[must_use]
     pub fn new_head(block: &Block) -> Self {
@@ -118,8 +143,12 @@ pub struct RpcContext {
     pub bootstrap: Vec<String>,
     /// Resolve `keccak256(code)` to a YAML/WAT package (reloaded by the node).
     pub contract_lookup: Option<ContractLookup>,
-    /// `eth_subscribe` fan-out (`newHeads` / `newPendingTransactions`).
+    /// `eth_subscribe` fan-out (`newHeads` / `newPendingTransactions` / `logs`).
     pub events: broadcast::Sender<RpcEvent>,
+    /// Process metrics (`GET /metrics`).
+    pub metrics: Arc<IvoryMetrics>,
+    /// If set, only these methods are dispatched (read-only RPC bind).
+    pub allow_methods: Option<Vec<String>>,
 }
 
 impl RpcContext {
@@ -144,7 +173,16 @@ impl RpcContext {
             bootstrap: Vec::new(),
             contract_lookup: None,
             events: broadcast::channel(256).0,
+            metrics: Arc::new(IvoryMetrics::new()),
+            allow_methods: None,
         }
+    }
+
+    /// Restrict this handler to an allowlist of method names.
+    #[must_use]
+    pub fn with_allow_methods(mut self, methods: Vec<String>) -> Self {
+        self.allow_methods = Some(methods);
+        self
     }
 
     /// Subscribe to head and pending-tx notifications.

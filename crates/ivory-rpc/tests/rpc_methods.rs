@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use ivory_chain::BlockStore;
 use ivory_consensus::{ConsensusEngine, PoAConsensus};
-use ivory_core::{Account, Block, BlockHeader, QuantEnvelope, QuantMetric};
+use ivory_core::{
+    Account, Block, BlockHeader, QuantEnvelope, QuantMetric, empty_list_roots, list_root,
+};
 use ivory_crypto::{keypair_from_byte, signed_transfer, signed_tx};
 use ivory_primitives::{Address, Bytes, H256, U256};
 use ivory_rpc::{NodeRole, RpcContext, RpcError, RpcHandler};
@@ -25,6 +27,7 @@ fn poa() -> PoAConsensus {
 }
 
 fn genesis() -> Block {
+    let (tx_root, rx_root) = empty_list_roots();
     let mut header = BlockHeader {
         number: 0,
         parent_hash: H256::ZERO,
@@ -33,8 +36,8 @@ fn genesis() -> Block {
         gas_limit: 30_000_000,
         gas_used: 0,
         state_root: H256::ZERO,
-        transactions_root: H256::ZERO,
-        receipts_root: H256::ZERO,
+        transactions_root: tx_root,
+        receipts_root: rx_root,
         difficulty: U256::ZERO,
         extra_data: Bytes::new(),
     };
@@ -453,6 +456,13 @@ fn get_tx_and_receipt_from_block() {
     );
     let hash = tx.hash();
     let parent = store.head_block().unwrap();
+    let receipts = vec![ivory_core::Receipt {
+        tx_hash: hash,
+        block_number: 1,
+        gas_used: 21_000,
+        status: true,
+        logs: Vec::new(),
+    }];
     let mut header = BlockHeader {
         number: 1,
         parent_hash: parent.hash(),
@@ -461,8 +471,8 @@ fn get_tx_and_receipt_from_block() {
         gas_limit: 30_000_000,
         gas_used: 21_000,
         state_root: H256::ZERO,
-        transactions_root: H256::ZERO,
-        receipts_root: H256::ZERO,
+        transactions_root: list_root(std::slice::from_ref(&tx)),
+        receipts_root: list_root(&receipts),
         difficulty: U256::ZERO,
         extra_data: Bytes::new(),
     };
@@ -472,13 +482,7 @@ fn get_tx_and_receipt_from_block() {
     let block = Block {
         header,
         transactions: vec![tx],
-        receipts: vec![ivory_core::Receipt {
-            tx_hash: hash,
-            block_number: 1,
-            gas_used: 21_000,
-            status: true,
-            logs: Vec::new(),
-        }],
+        receipts,
     };
     store.insert_block(block).unwrap();
     let got = h
@@ -608,6 +612,13 @@ fn list_contracts_after_create() {
     let addr = Address::create(&tx.from, tx.nonce);
     state.set_code(addr, code);
     let parent = store.head_block().unwrap();
+    let receipts = vec![ivory_core::Receipt {
+        tx_hash: hash,
+        block_number: 1,
+        gas_used: 50_000,
+        status: true,
+        logs: Vec::new(),
+    }];
     let mut header = BlockHeader {
         number: 1,
         parent_hash: parent.hash(),
@@ -616,8 +627,8 @@ fn list_contracts_after_create() {
         gas_limit: 30_000_000,
         gas_used: 50_000,
         state_root: H256::ZERO,
-        transactions_root: H256::ZERO,
-        receipts_root: H256::ZERO,
+        transactions_root: list_root(std::slice::from_ref(&tx)),
+        receipts_root: list_root(&receipts),
         difficulty: U256::ZERO,
         extra_data: Bytes::new(),
     };
@@ -628,13 +639,7 @@ fn list_contracts_after_create() {
         .insert_block(Block {
             header,
             transactions: vec![tx],
-            receipts: vec![ivory_core::Receipt {
-                tx_hash: hash,
-                block_number: 1,
-                gas_used: 50_000,
-                status: true,
-                logs: Vec::new(),
-            }],
+            receipts,
         })
         .unwrap();
     let list = h.handle("ivory_listContracts", json!([])).unwrap();
@@ -667,6 +672,13 @@ fn list_contracts_matches_file_catalog() {
     let addr = Address::create(&tx.from, tx.nonce);
     state.set_code(addr, code);
     let parent = store.head_block().unwrap();
+    let receipts = vec![ivory_core::Receipt {
+        tx_hash,
+        block_number: 1,
+        gas_used: 50_000,
+        status: true,
+        logs: Vec::new(),
+    }];
     let mut header = BlockHeader {
         number: 1,
         parent_hash: parent.hash(),
@@ -675,8 +687,8 @@ fn list_contracts_matches_file_catalog() {
         gas_limit: 30_000_000,
         gas_used: 50_000,
         state_root: H256::ZERO,
-        transactions_root: H256::ZERO,
-        receipts_root: H256::ZERO,
+        transactions_root: list_root(std::slice::from_ref(&tx)),
+        receipts_root: list_root(&receipts),
         difficulty: U256::ZERO,
         extra_data: Bytes::new(),
     };
@@ -687,13 +699,7 @@ fn list_contracts_matches_file_catalog() {
         .insert_block(Block {
             header,
             transactions: vec![tx],
-            receipts: vec![ivory_core::Receipt {
-                tx_hash,
-                block_number: 1,
-                gas_used: 50_000,
-                status: true,
-                logs: Vec::new(),
-            }],
+            receipts,
         })
         .unwrap();
     let h = RpcHandler::new(
@@ -786,6 +792,78 @@ fn eth_call_wasm_returns_padded_i32() {
 }
 
 #[test]
+fn eth_estimate_gas_create_includes_data_cost() {
+    let (h, _, _, _) = handler_with_genesis();
+    let from = keypair_from_byte(1).2;
+    let out = h
+        .handle(
+            "eth_estimateGas",
+            json!([{
+                "from": from.to_hex(),
+                "to": null,
+                "data": "0x01020304",
+                "gas": "0x186a0"
+            }]),
+        )
+        .unwrap();
+    let qty = out.as_str().unwrap();
+    let n = u64::from_str_radix(qty.trim_start_matches("0x"), 16).unwrap();
+    assert!(n >= 21_000 + 4 * 16);
+}
+
+#[test]
+fn eth_call_historical_uses_state_at_snapshot() {
+    let (h, store, live, _) = handler_with_genesis();
+    let wasm = wat::parse_str(
+        r#"(module
+          (func (export "call") (result i32)
+            i32.const 42
+          )
+        )"#,
+    )
+    .unwrap();
+    let to = keypair_from_byte(3).2;
+    let parent = store.head_block().unwrap();
+    let (tx_root, rx_root) = empty_list_roots();
+    let mut header = BlockHeader {
+        number: 1,
+        parent_hash: parent.hash(),
+        timestamp: 2,
+        miner: miner(),
+        gas_limit: 30_000_000,
+        gas_used: 0,
+        state_root: H256::ZERO,
+        transactions_root: tx_root,
+        receipts_root: rx_root,
+        difficulty: U256::ZERO,
+        extra_data: Bytes::new(),
+    };
+    poa()
+        .seal_header(&mut header, &miner(), &miner_sk())
+        .unwrap();
+    let block = Block {
+        header,
+        transactions: Vec::new(),
+        receipts: Vec::new(),
+    };
+    let hash = store.insert_block(block).unwrap().hash;
+    let snap = StateDB::new();
+    snap.set_code(to, Bytes::from_vec(wasm));
+    store.record_state(hash, snap);
+    assert!(live.get_code(&to).is_empty());
+    let historic = h
+        .handle("eth_call", json!([{ "to": to.to_hex() }, "0x1"]))
+        .unwrap();
+    let hex = historic.as_str().unwrap();
+    assert_eq!(hex.len(), 66);
+    assert!(hex.ends_with("2a"));
+    let latest = h
+        .handle("eth_call", json!([{ "to": to.to_hex() }, "latest"]))
+        .unwrap();
+    assert_eq!(latest, json!("0x"));
+}
+
+#[test]
 fn eth_estimate_gas_transfer_at_least_intrinsic() {
     let (h, _, state, _) = handler_with_genesis();
     let from = keypair_from_byte(1).2;
@@ -837,6 +915,155 @@ fn eth_send_transaction_not_found() {
         h.handle("eth_sendTransaction", json!([])),
         Err(RpcError::MethodNotFound(_))
     ));
+}
+
+#[test]
+fn eth_fee_history_not_found() {
+    let h = empty_handler();
+    assert!(matches!(
+        h.handle("eth_feeHistory", json!([])),
+        Err(RpcError::MethodNotFound(_))
+    ));
+}
+
+#[test]
+fn eth_call_historical_uses_state_at() {
+    let (h, store, state, _) = handler_with_genesis();
+    let to = keypair_from_byte(3).2;
+    let hist =
+        wat::parse_str(r#"(module (func (export "call") (result i32) i32.const 1))"#).unwrap();
+    let live =
+        wat::parse_str(r#"(module (func (export "call") (result i32) i32.const 2))"#).unwrap();
+    let genesis = store.get_block_by_number(0).unwrap();
+    let snap = StateDB::new();
+    snap.set_code(to, Bytes::from_vec(hist));
+    store.record_state(genesis.hash(), snap);
+    state.set_code(to, Bytes::from_vec(live));
+    let hist_out = h
+        .handle("eth_call", json!([{ "to": to.to_hex() }, "0x0"]))
+        .unwrap();
+    let live_out = h
+        .handle("eth_call", json!([{ "to": to.to_hex() }, "latest"]))
+        .unwrap();
+    assert!(hist_out.as_str().unwrap().ends_with("01"));
+    assert!(live_out.as_str().unwrap().ends_with("02"));
+}
+
+#[test]
+fn eth_estimate_gas_create_covers_intrinsic_and_data() {
+    let (h, _, state, _) = handler_with_genesis();
+    let from = keypair_from_byte(1).2;
+    let mut acc = Account::new();
+    acc.balance = U256::from(1_000_000u64);
+    state.set_account(from, acc);
+    let data = format!("0x{}", "aa".repeat(10));
+    let out = h
+        .handle(
+            "eth_estimateGas",
+            json!([{
+                "from": from.to_hex(),
+                "data": data,
+                "gas": "0x186a0"
+            }]),
+        )
+        .unwrap();
+    let n = u64::from_str_radix(out.as_str().unwrap().trim_start_matches("0x"), 16).unwrap();
+    assert!(n >= 21_000 + 16 * 10);
+}
+
+#[test]
+fn eth_call_calldata_first_byte() {
+    let (h, _, state, _) = handler_with_genesis();
+    let wasm = wat::parse_str(
+        r#"(module
+          (import "env" "calldata_at" (func $at (param i32) (result i32)))
+          (func (export "call") (result i32)
+            i32.const 0
+            call $at
+          )
+        )"#,
+    )
+    .unwrap();
+    let to = keypair_from_byte(4).2;
+    state.set_code(to, Bytes::from_vec(wasm));
+    let out = h
+        .handle(
+            "eth_call",
+            json!([{ "to": to.to_hex(), "data": "0x2a" }, "latest"]),
+        )
+        .unwrap();
+    assert!(out.as_str().unwrap().ends_with("2a"));
+}
+
+#[test]
+fn eth_get_logs_filters_address_and_caps_range() {
+    let (h, store, _, _) = handler_with_genesis();
+    let addr = keypair_from_byte(5).2;
+    let tx = signed_transfer(
+        &keypair_from_byte(1).0,
+        keypair_from_byte(2).2,
+        0,
+        U256::from(1u64),
+        21_000,
+    );
+    let log = ivory_core::Log {
+        address: addr,
+        topics: Vec::new(),
+        data: Bytes::new(),
+    };
+    let receipt = ivory_core::Receipt {
+        tx_hash: tx.hash(),
+        block_number: 1,
+        gas_used: 21_000,
+        status: true,
+        logs: vec![log],
+    };
+    let parent = store.head_block().unwrap();
+    let mut header = BlockHeader {
+        number: 1,
+        parent_hash: parent.hash(),
+        timestamp: 2,
+        miner: miner(),
+        gas_limit: 30_000_000,
+        gas_used: 21_000,
+        state_root: H256::ZERO,
+        transactions_root: list_root(std::slice::from_ref(&tx)),
+        receipts_root: list_root(std::slice::from_ref(&receipt)),
+        difficulty: U256::ZERO,
+        extra_data: Bytes::new(),
+    };
+    poa()
+        .seal_header(&mut header, &miner(), &miner_sk())
+        .unwrap();
+    store
+        .insert_block(Block {
+            header,
+            transactions: vec![tx],
+            receipts: vec![receipt],
+        })
+        .unwrap();
+    let logs = h
+        .handle(
+            "eth_getLogs",
+            json!([{ "fromBlock": "0x0", "toBlock": "latest", "address": addr.to_hex() }]),
+        )
+        .unwrap();
+    assert_eq!(logs.as_array().unwrap().len(), 1);
+    assert!(
+        h.handle(
+            "eth_getLogs",
+            json!([{ "fromBlock": "0x0", "toBlock": "0x3e9" }]),
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn ivory_get_header_by_number() {
+    let (h, _, _, _) = handler_with_genesis();
+    let hdr = h.handle("ivory_getHeaderByNumber", json!(["0x0"])).unwrap();
+    assert!(hdr.get("transactionsRoot").is_some());
+    assert!(hdr.get("transactions").is_none());
 }
 
 #[test]

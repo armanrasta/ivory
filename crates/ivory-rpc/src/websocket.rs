@@ -8,6 +8,9 @@ use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tracing::{debug, error};
 
+use hex;
+use ivory_primitives::Address;
+
 use crate::context::RpcEvent;
 use crate::jsonrpc::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 use crate::server::{RpcState, dispatch};
@@ -16,6 +19,7 @@ use crate::server::{RpcState, dispatch};
 enum SubKind {
     NewHeads,
     NewPendingTx,
+    Logs { address: Option<Address> },
 }
 
 /// Handle a WebSocket connection.
@@ -126,6 +130,14 @@ fn subscribe(
     let kind = match topic {
         "newHeads" => SubKind::NewHeads,
         "newPendingTransactions" => SubKind::NewPendingTx,
+        "logs" => {
+            let address = arr.get(1).and_then(|v| {
+                v.get("address")
+                    .and_then(Value::as_str)
+                    .and_then(|s| Address::from_hex(s).ok())
+            });
+            SubKind::Logs { address }
+        }
         other => {
             return JsonRpcResponse::error(
                 id,
@@ -158,6 +170,14 @@ fn notifications_for(subs: &HashMap<String, SubKind>, event: &RpcEvent) -> Vec<S
             (SubKind::NewPendingTx, RpcEvent::NewPendingTx { hash }) => {
                 Some(Value::String(hash.to_hex()))
             }
+            (
+                SubKind::Logs { address },
+                RpcEvent::NewLogs {
+                    logs,
+                    block_number,
+                    block_hash,
+                },
+            ) => Some(logs_json(logs, *address, *block_number, *block_hash)),
             _ => None,
         };
         if let Some(result) = result {
@@ -201,6 +221,28 @@ fn head_json(event: &RpcEvent) -> Value {
         "gasLimit": encode_qty(*gas_limit),
         "gasUsed": encode_qty(*gas_used),
     })
+}
+
+fn logs_json(
+    logs: &[ivory_core::Log],
+    filter: Option<Address>,
+    block_number: u64,
+    block_hash: ivory_primitives::H256,
+) -> Value {
+    let items: Vec<Value> = logs
+        .iter()
+        .filter(|l| filter.is_none_or(|a| l.address == a))
+        .map(|l| {
+            json!({
+                "address": l.address.to_hex(),
+                "topics": l.topics.iter().map(|t| t.to_hex()).collect::<Vec<_>>(),
+                "data": format!("0x{}", hex::encode(l.data.as_slice())),
+                "blockNumber": encode_qty(block_number),
+                "blockHash": block_hash.to_hex(),
+            })
+        })
+        .collect();
+    Value::Array(items)
 }
 
 fn encode_qty(n: u64) -> String {

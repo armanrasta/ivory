@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use ivory_chain::BlockStore;
 use ivory_consensus::{ConsensusEngine, PoAConsensus};
-use ivory_core::{Block, BlockHeader};
+use ivory_core::{Block, BlockHeader, empty_list_roots};
 use ivory_crypto::keypair_from_byte;
 use ivory_primitives::{Bytes, H256, U256};
 use ivory_rpc::{
@@ -22,6 +22,7 @@ fn genesis() -> Block {
     let sk = keypair_from_byte(9).0;
     let miner = keypair_from_byte(9).2;
     let poa = PoAConsensus::from_secret(&sk).unwrap();
+    let (tx_root, rx_root) = empty_list_roots();
     let mut header = BlockHeader {
         number: 0,
         parent_hash: H256::ZERO,
@@ -30,8 +31,8 @@ fn genesis() -> Block {
         gas_limit: 1,
         gas_used: 0,
         state_root: H256::ZERO,
-        transactions_root: H256::ZERO,
-        receipts_root: H256::ZERO,
+        transactions_root: tx_root,
+        receipts_root: rx_root,
         difficulty: U256::ZERO,
         extra_data: Bytes::new(),
     };
@@ -182,6 +183,14 @@ async fn http_livez_readyz() {
     let (status, body) = http_get(addr, "/readyz", None).await;
     assert_eq!(status, 200);
     assert!(body.contains("ready"));
+}
+
+#[tokio::test]
+async fn http_metrics_has_head_after_genesis() {
+    let (addr, _h) = spawn_server().await;
+    let (status, body) = http_get(addr, "/metrics", None).await;
+    assert_eq!(status, 200);
+    assert!(body.contains("ivory_head_number"), "{body}");
 }
 
 async fn spawn_token_server(token: &str) -> (SocketAddr, tokio::task::JoinHandle<()>) {
@@ -405,4 +414,99 @@ async fn ws_subscribe_pending_tx() {
         .unwrap();
     let note: serde_json::Value = serde_json::from_str(&note.into_text().unwrap()).unwrap();
     assert_eq!(note["params"]["result"], hash.to_hex());
+}
+
+#[tokio::test]
+async fn ws_subscribe_logs_filters_address() {
+    use futures::{SinkExt, StreamExt};
+    use ivory_core::Log;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let addr = keypair_from_byte(3).2;
+    let other = keypair_from_byte(4).2;
+    let ctx = RpcContext::new(
+        Arc::new(BlockStore::new(
+            PoAConsensus::from_secret(&keypair_from_byte(9).0).unwrap(),
+        )),
+        Arc::new(TransactionPool::new()),
+        StateDB::new(),
+        1,
+    );
+    let events = ctx.events.clone();
+    let (bind, _h) = spawn_with_handler(RpcHandler::new(ctx)).await;
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{bind}/"))
+        .await
+        .unwrap();
+    ws.send(Message::Text(
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_subscribe",
+            "params": ["logs", {"address": addr.to_hex()}]
+        })
+        .to_string(),
+    ))
+    .await
+    .unwrap();
+    let _ = ws.next().await;
+    events
+        .send(RpcEvent::NewLogs {
+            logs: vec![
+                Log {
+                    address: other,
+                    topics: Vec::new(),
+                    data: Bytes::new(),
+                },
+                Log {
+                    address: addr,
+                    topics: Vec::new(),
+                    data: Bytes::from_vec(vec![0x2a]),
+                },
+            ],
+            block_number: 1,
+            block_hash: H256::from_bytes([0x11; 32]),
+        })
+        .unwrap();
+    let note = tokio::time::timeout(Duration::from_secs(2), ws.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let note: serde_json::Value = serde_json::from_str(&note.into_text().unwrap()).unwrap();
+    let logs = note["params"]["result"].as_array().unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0]["address"], addr.to_hex());
+}
+
+#[tokio::test]
+async fn ws_unknown_subscribe_topic_is_invalid_params() {
+    use futures::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let ctx = RpcContext::new(
+        Arc::new(BlockStore::new(
+            PoAConsensus::from_secret(&keypair_from_byte(9).0).unwrap(),
+        )),
+        Arc::new(TransactionPool::new()),
+        StateDB::new(),
+        1,
+    );
+    let (addr, _h) = spawn_with_handler(RpcHandler::new(ctx)).await;
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+        .await
+        .unwrap();
+    ws.send(Message::Text(
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_subscribe",
+            "params": ["syncing"]
+        })
+        .to_string(),
+    ))
+    .await
+    .unwrap();
+    let reply = ws.next().await.unwrap().unwrap();
+    let body: serde_json::Value = serde_json::from_str(&reply.into_text().unwrap()).unwrap();
+    assert_eq!(body["error"]["code"], -32602);
 }
