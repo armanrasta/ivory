@@ -1,6 +1,11 @@
 from unittest.mock import patch
 
-from ivory_client.codec import decode_envelope, encode_envelope, keccak256
+from ivory_client.codec import (
+    decode_envelope,
+    encode_envelope,
+    encode_signed_transfer_hex,
+    keccak256,
+)
 from ivory_client.client import IvoryClient, resolve_rpc_url
 
 
@@ -96,3 +101,31 @@ def test_resolve_rpc_public(monkeypatch):
         pass
     monkeypatch.setenv("IVORY_PUBLIC_RPC", "http://public:8545")
     assert resolve_rpc_url(chain="public") == "http://public:8545"
+
+
+def test_token_from_env(monkeypatch):
+    monkeypatch.setenv("IVORY_RPC_TOKEN", "secret")
+    client = IvoryClient("http://127.0.0.1:8545", secret_key=b"\x01" * 32, chain_id=1)
+    assert client.token == "secret"
+    client.close()
+
+
+def test_get_logs_mocked():
+    client = IvoryClient("http://127.0.0.1:8545", secret_key=b"\x01" * 32, chain_id=1)
+    with patch.object(client, "_rpc", return_value=[]) as rpc:
+        assert client.get_logs(address="0x" + "11" * 20) == []
+        rpc.assert_called_once()
+    client.close()
+
+
+def test_bearer_token_header(monkeypatch):
+    monkeypatch.setenv("IVORY_RPC_TOKEN", "secret")
+    client = IvoryClient("http://127.0.0.1:8545", secret_key=b"\x01" * 32, chain_id=1)
+    assert client._http.headers["Authorization"] == "Bearer secret"
+    client.close()
+
+
+def test_encode_signed_transfer_hex():
+    raw = encode_signed_transfer_hex(b"\x01" * 32, "0x" + "11" * 20, 0, 1)
+    assert raw.startswith("0x")
+    assert len(raw) > 10

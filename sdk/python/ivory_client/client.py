@@ -35,13 +35,18 @@ class IvoryClient:
         chain_id: int | None = None,
         timeout: float = 10.0,
         chain: str | None = None,
+        token: str | None = None,
     ) -> None:
         if not secret_key:
             raise ValueError("secret_key is required")
         self.rpc_url = resolve_rpc_url(rpc_url, chain)
         self.secret_key = secret_key
         self._chain_id = chain_id
-        self._http = httpx.Client(timeout=timeout)
+        self.token = (token or os.environ.get("IVORY_RPC_TOKEN", "")).strip() or None
+        headers = {}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        self._http = httpx.Client(timeout=timeout, headers=headers)
 
     def close(self) -> None:
         self._http.close()
@@ -59,7 +64,10 @@ class IvoryClient:
             "method": method,
             "params": params or [],
         }
-        response = self._http.post(self.rpc_url, json=body)
+        headers = {}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        response = self._http.post(self.rpc_url, json=body, headers=headers)
         response.raise_for_status()
         payload = response.json()
         if "error" in payload and payload["error"]:
@@ -137,7 +145,7 @@ class IvoryClient:
         return decode_envelope(data)
 
     def eth_call(self, tx: dict[str, Any], block: str = "latest") -> bytes:
-        """Simulate a call. WASM `data` is unused; return is a 32-byte `i32` or empty."""
+        """Simulate a call. WASM `data` is `env.calldata_*`; return is a 32-byte `i32` or empty."""
         raw = self._rpc("eth_call", [tx, block])
         if not raw or raw == "0x":
             return b""
@@ -147,3 +155,30 @@ class IvoryClient:
         """Estimate intrinsic plus VM fuel for a simulated call."""
         raw = self._rpc("eth_estimateGas", [tx, block])
         return int(raw, 16)
+
+    def get_logs(
+        self,
+        from_block: str = "0x0",
+        to_block: str = "latest",
+        address: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """`eth_getLogs` over receipt logs (no bloom; node caps the scan)."""
+        filt: dict[str, Any] = {"fromBlock": from_block, "toBlock": to_block}
+        if address:
+            filt["address"] = address
+        return self._rpc("eth_getLogs", [filt])
+
+    def encode_signed_transfer_hex(
+        self,
+        to_hex: str,
+        value: int,
+        nonce: int,
+        gas: int = 21_000,
+        gas_price: int = 1,
+    ) -> str:
+        """Hex-encode a signed transfer (bincode payload). No ABI encoder."""
+        to = bytes.fromhex(to_hex.removeprefix("0x"))
+        _tx_hash, payload = encode_signed_tx(
+            self.secret_key, to, nonce, value, gas, gas_price, b""
+        )
+        return "0x" + payload.hex()

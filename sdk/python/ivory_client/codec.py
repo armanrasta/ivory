@@ -165,3 +165,17 @@ def encode_signed_tx(
     payload = unsigned + sig + pk
     tx_hash = keccak256(payload)
     return tx_hash, payload
+
+
+def encode_signed_transfer_hex(
+    sk: bytes,
+    to_hex: str,
+    nonce: int,
+    value: int,
+    gas: int = 21_000,
+    gas_price: int = 1,
+) -> str:
+    """Hex-encode a signed transfer (no ABI encoder)."""
+    to = bytes.fromhex(to_hex.removeprefix("0x"))
+    _, payload = encode_signed_tx(sk, to, nonce, value, gas, gas_price, b"")
+    return "0x" + payload.hex()

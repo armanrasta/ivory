@@ -1,7 +1,8 @@
 # Ivory client
 
 Pure-Python JSON-RPC client for an **Ivory server**. Django and other apps import
-this package; they do not run a node.
+this package; they do not run a node. There is no Django package and no
+`crates/ivory-sdk-py` PyO3 crate — `import ivory_client` only.
 
 ```python
 from ivory_client import IvoryClient
@@ -44,8 +45,10 @@ with IvoryClient("http://127.0.0.1:8545", sk) as client:
 
 `submit_decision` reads `eth_getTransactionCount` when `nonce` is omitted.
 
-Django (or any app): add `ivory-client` to dependencies and construct `IvoryClient`
-in settings or a service layer with the server URL. There is no Django-specific package.
+Django (or any app): `import ivory_client` / add `ivory-client` to dependencies.
+There is **no Django package** in this repo. Optional `IVORY_RPC_TOKEN` is sent
+as `Authorization: Bearer`. `encode_signed_transfer_hex` hex-encodes a signed
+transfer (no ABI encoder). `get_logs` wraps `eth_getLogs`.
 
 ## Tests
 
