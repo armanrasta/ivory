@@ -14,4 +14,7 @@ pub enum BlockError {
     /// Block timestamp is invalid relative to its parent.
     #[error("invalid timestamp")]
     InvalidTimestamp,
+    /// Quant envelope in `tx.data` failed structural validation.
+    #[error("invalid quant envelope: {0}")]
+    InvalidQuantEnvelope(&'static str),
 }
