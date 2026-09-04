@@ -26,18 +26,18 @@ otherwise a comma-separated origin allowlist.
 |--------|--------|
 | `eth_chainId` | Configured chain id |
 | `eth_blockNumber` | Canonical head |
-| `eth_getBalance` | Live state (block tags ignored) |
-| `eth_getCode` | Live bytecode |
-| `eth_getStorageAt` | Live slot |
+| `eth_getBalance` | Live state for `latest`/`pending`/`safe`/`finalized`; `state_at` for numeric/`earliest` |
+| `eth_getCode` | Same tag rules as `eth_getBalance` |
+| `eth_getStorageAt` | Same tag rules as `eth_getBalance` |
 | `eth_getBlockByNumber` / `eth_getBlockByHash` | Hash list of txs |
 | `eth_getTransactionByHash` | Pool or chain |
-| `eth_getTransactionCount` | Live account nonce (block tags ignored) |
+| `eth_getTransactionCount` | Same tag rules as `eth_getBalance` |
 | `eth_getTransactionReceipt` | `logs`, `contractAddress` on CREATE |
 | `eth_sendRawTransaction` | Hex of **bincode** `Transaction` |
 | `eth_call` | Fork-and-simulate on live state (`latest`/`pending`) or `state_at` for other tags. Returns `0x` + hex of a 32-byte big-endian WASM `i32`, or `0x` for EOA/CREATE. WASM `data` is `env.calldata_*` (no Solidity ABI). |
 | `eth_estimateGas` | Same simulation; returns intrinsic + VM fuel (no binary search) |
 | `eth_getLogs` | Receipt scan by `fromBlock`/`toBlock`/`address`. Errors if the range exceeds 1000 blocks. No bloom. |
-| `eth_getProof` | Not served: nodes are written to RocksDB (`t` + hash) but a proof walk is not exported yet. |
+| `eth_getProof` | Patricia walk on live/`state_at` (account + requested storage keys). Nodes are `0x` + hex(bincode). |
 | `eth_subscribe` | WebSocket only: `newHeads`, `newPendingTransactions`, `logs` (optional address filter) |
 | `eth_unsubscribe` | WebSocket only |
 | `ivory_nodeInfo` | Role (`producer` / `follower`), address, chain id, peer id, peers, pending, head, bootstrap |

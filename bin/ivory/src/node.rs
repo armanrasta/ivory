@@ -41,6 +41,7 @@ const READ_ONLY_METHODS: &[&str] = &[
     "eth_call",
     "eth_estimateGas",
     "eth_getLogs",
+    "eth_getProof",
     "ivory_nodeInfo",
     "ivory_listContracts",
     "ivory_getHeaderByNumber",

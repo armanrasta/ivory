@@ -84,8 +84,8 @@ A light client can follow **hash-linked headers + PoA seals** without bodies:
 
 `eth_getBlockByNumber` still returns the full block (tx hashes) when the
 node has that body. Patricia account-trie nodes are written under RocksDB
-keys `t` + hash (`ChainPersist::persist_trie_nodes`). `eth_getProof` is not
-served until a proof walker is added on those nodes.
+keys `t` + hash (`ChainPersist::persist_trie_nodes`). `eth_getProof` walks
+those nodes (and the storage trie) on live or `state_at` snapshots.
 
 Non-canonical `BlockStore` snapshots are pruned on head movement.
 

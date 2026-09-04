@@ -62,9 +62,7 @@ impl RpcHandler {
             "eth_call" => self.eth_call(params),
             "eth_estimateGas" => self.eth_estimate_gas(params),
             "eth_getLogs" => self.eth_get_logs(params),
-            "eth_getProof" => Err(RpcError::Server(
-                "eth_getProof needs persisted Patricia nodes; see docs/rpc.md".into(),
-            )),
+            "eth_getProof" => self.eth_get_proof(params),
             "eth_subscribe" | "eth_unsubscribe" => Err(RpcError::Server("WebSocket only".into())),
             "ivory_nodeInfo" => self.node_info(),
             "ivory_listContracts" => self.list_contracts(),
@@ -95,10 +93,9 @@ impl RpcHandler {
 
     fn get_balance(&self, params: Value) -> Result<Value, RpcError> {
         let addr = parse_address_at(&params, 0)?;
-        let _tag = parse_block_tag_at(&params, 1).unwrap_or(BlockTag::Latest);
-        let balance = self
-            .ctx
-            .state
+        let tag = optional_block_id(&params, 1)?;
+        let state = self.state_for_tag(tag)?;
+        let balance = state
             .get_account(&addr)
             .map(|a| a.balance)
             .unwrap_or(U256::ZERO);
@@ -107,27 +104,59 @@ impl RpcHandler {
 
     fn get_code(&self, params: Value) -> Result<Value, RpcError> {
         let addr = parse_address_at(&params, 0)?;
-        let code = self.ctx.state.get_code(&addr);
+        let tag = optional_block_id(&params, 1)?;
+        let state = self.state_for_tag(tag)?;
+        let code = state.get_code(&addr);
         Ok(Value::String(format!("0x{}", hex::encode(code))))
     }
 
     fn get_storage_at(&self, params: Value) -> Result<Value, RpcError> {
         let addr = parse_address_at(&params, 0)?;
         let slot = parse_h256_at(&params, 1)?;
-        let val = self.ctx.state.get_storage(&addr, &slot);
+        let tag = optional_block_id(&params, 2)?;
+        let state = self.state_for_tag(tag)?;
+        let val = state.get_storage(&addr, &slot);
         Ok(Value::String(val.to_hex()))
     }
 
     fn get_transaction_count(&self, params: Value) -> Result<Value, RpcError> {
         let addr = parse_address_at(&params, 0)?;
-        let _tag = parse_block_tag_at(&params, 1).unwrap_or(BlockTag::Latest);
-        let nonce = self
-            .ctx
-            .state
-            .get_account(&addr)
-            .map(|a| a.nonce)
-            .unwrap_or(0);
+        let tag = optional_block_id(&params, 1)?;
+        let state = self.state_for_tag(tag)?;
+        let nonce = state.get_account(&addr).map(|a| a.nonce).unwrap_or(0);
         Ok(Value::String(encode_qty(nonce)))
+    }
+
+    fn eth_get_proof(&self, params: Value) -> Result<Value, RpcError> {
+        let addr = parse_address_at(&params, 0)?;
+        let slots = parse_storage_keys(&params, 1)?;
+        let tag = optional_block_id(&params, 2)?;
+        let state = self.state_for_tag(tag)?;
+        let account_proof = state.account_proof(&addr);
+        ivory_state::verify(account_proof.root, addr.as_bytes(), &account_proof.nodes)
+            .map_err(|e| RpcError::Server(e.to_string()))?;
+        let acc = state.get_account(&addr).unwrap_or_default();
+        let mut storage_proof = Vec::new();
+        for slot in slots {
+            let p = state.storage_proof(&addr, &slot);
+            ivory_state::verify(p.root, slot.as_bytes(), &p.nodes)
+                .map_err(|e| RpcError::Server(e.to_string()))?;
+            let val = state.get_storage(&addr, &slot);
+            storage_proof.push(json!({
+                "key": slot.to_hex(),
+                "value": val.to_hex(),
+                "proof": encode_proof_nodes(&p.nodes),
+            }));
+        }
+        Ok(json!({
+            "address": addr.to_hex(),
+            "accountProof": encode_proof_nodes(&account_proof.nodes),
+            "balance": acc.balance.to_hex(),
+            "codeHash": acc.code_hash.to_hex(),
+            "nonce": encode_qty(acc.nonce),
+            "storageHash": acc.storage_root.to_hex(),
+            "storageProof": storage_proof,
+        }))
     }
 
     fn get_block_by_number(&self, params: Value) -> Result<Value, RpcError> {
@@ -521,11 +550,40 @@ fn parse_h256_at(params: &Value, idx: usize) -> Result<H256, RpcError> {
     H256::from_hex(&s).map_err(|e| RpcError::InvalidParams(e.to_string()))
 }
 
-fn parse_block_tag_at(params: &Value, idx: usize) -> Result<BlockTag, RpcError> {
-    match parse_block_id_at(params, idx)? {
-        BlockNumberOrTag::Tag(t) => Ok(t),
-        BlockNumberOrTag::Number(_) => Err(RpcError::InvalidParams("expected block tag".into())),
+fn optional_block_id(params: &Value, idx: usize) -> Result<BlockNumberOrTag, RpcError> {
+    let arr = params_array(params)?;
+    match arr.get(idx) {
+        None | Some(Value::Null) => Ok(BlockNumberOrTag::Tag(BlockTag::Latest)),
+        Some(v) => parse_block_id(v),
     }
+}
+
+fn parse_storage_keys(params: &Value, idx: usize) -> Result<Vec<H256>, RpcError> {
+    let arr = params_array(params)?;
+    let Some(v) = arr.get(idx) else {
+        return Ok(Vec::new());
+    };
+    if v.is_null() {
+        return Ok(Vec::new());
+    }
+    let keys = v
+        .as_array()
+        .ok_or_else(|| RpcError::InvalidParams("storage keys must be an array".into()))?;
+    keys.iter()
+        .map(|k| {
+            let s = k
+                .as_str()
+                .ok_or_else(|| RpcError::InvalidParams("storage key must be hex".into()))?;
+            H256::from_hex(s).map_err(|e| RpcError::InvalidParams(e.to_string()))
+        })
+        .collect()
+}
+
+fn encode_proof_nodes(nodes: &[Vec<u8>]) -> Vec<String> {
+    nodes
+        .iter()
+        .map(|n| format!("0x{}", hex::encode(n)))
+        .collect()
 }
 
 fn parse_block_id_at(params: &Value, idx: usize) -> Result<BlockNumberOrTag, RpcError> {

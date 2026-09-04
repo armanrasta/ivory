@@ -1066,6 +1066,125 @@ fn ivory_get_header_by_number() {
     assert!(hdr.get("transactions").is_none());
 }
 
+fn sealed_child(parent: &Block, number: u64, ts: u64) -> Block {
+    let (tx_root, rx_root) = empty_list_roots();
+    let mut header = BlockHeader {
+        number,
+        parent_hash: parent.hash(),
+        timestamp: ts,
+        miner: miner(),
+        gas_limit: 30_000_000,
+        gas_used: 0,
+        state_root: H256::ZERO,
+        transactions_root: tx_root,
+        receipts_root: rx_root,
+        difficulty: U256::ZERO,
+        extra_data: Bytes::new(),
+    };
+    poa()
+        .seal_header(&mut header, &miner(), &miner_sk())
+        .unwrap();
+    Block {
+        header,
+        transactions: Vec::new(),
+        receipts: Vec::new(),
+    }
+}
+
+#[test]
+fn historical_balance_code_storage_nonce_use_state_at() {
+    let (h, store, live, _) = handler_with_genesis();
+    let addr = keypair_from_byte(1).2;
+    let slot = H256::from_bytes([4u8; 32]);
+    let genesis = store.head_block().unwrap();
+    let mut g = Account::new();
+    g.balance = U256::from(10u64);
+    g.nonce = 1;
+    let genesis_state = StateDB::new();
+    genesis_state.set_account(addr, g);
+    genesis_state.set_code(addr, Bytes::from_slice(&[0x11]));
+    genesis_state.set_storage(addr, slot, U256::from(3u64));
+    store.record_state(genesis.hash(), genesis_state);
+
+    let child = sealed_child(&genesis, 1, 2);
+    store.insert_block(child.clone()).unwrap();
+    let mut mid = Account::new();
+    mid.balance = U256::from(50u64);
+    mid.nonce = 2;
+    let mid_state = StateDB::new();
+    mid_state.set_account(addr, mid);
+    mid_state.set_code(addr, Bytes::from_slice(&[0x22]));
+    mid_state.set_storage(addr, slot, U256::from(8u64));
+    store.record_state(child.hash(), mid_state);
+
+    let mut now = Account::new();
+    now.balance = U256::from(99u64);
+    now.nonce = 9;
+    live.set_account(addr, now);
+    live.set_code(addr, Bytes::from_slice(&[0x33]));
+    live.set_storage(addr, slot, U256::from(1u64));
+
+    let hex = addr.to_hex();
+    let slot_hex = slot.to_hex();
+    assert_eq!(
+        h.handle("eth_getBalance", json!([&hex, "latest"])).unwrap(),
+        json!(U256::from(99u64).to_hex())
+    );
+    assert_eq!(
+        h.handle("eth_getBalance", json!([&hex, "0x0"])).unwrap(),
+        json!(U256::from(10u64).to_hex())
+    );
+    assert_eq!(
+        h.handle("eth_getBalance", json!([&hex, "0x1"])).unwrap(),
+        json!(U256::from(50u64).to_hex())
+    );
+    assert_eq!(
+        h.handle("eth_getTransactionCount", json!([&hex, "0x0"]))
+            .unwrap(),
+        json!("0x1")
+    );
+    assert_eq!(
+        h.handle("eth_getCode", json!([&hex, "0x1"])).unwrap(),
+        json!("0x22")
+    );
+    assert_eq!(
+        h.handle("eth_getStorageAt", json!([&hex, slot_hex, "0x0"]))
+            .unwrap(),
+        json!(U256::from(3u64).to_hex())
+    );
+}
+
+#[test]
+fn eth_get_proof_walks_account_and_storage() {
+    let (h, _, state, _) = handler_with_genesis();
+    let addr = keypair_from_byte(1).2;
+    let slot = H256::from_bytes([5u8; 32]);
+    let mut acc = Account::new();
+    acc.balance = U256::from(7u64);
+    state.set_account(addr, acc);
+    state.set_storage(addr, slot, U256::from(11u64));
+    let out = h
+        .handle(
+            "eth_getProof",
+            json!([addr.to_hex(), [slot.to_hex()], "latest"]),
+        )
+        .unwrap();
+    assert_eq!(out["address"], addr.to_hex());
+    assert_eq!(out["balance"], U256::from(7u64).to_hex());
+    let nodes = out["accountProof"].as_array().unwrap();
+    assert!(!nodes.is_empty());
+    let encoded: Vec<Vec<u8>> = nodes
+        .iter()
+        .map(|n| hex::decode(n.as_str().unwrap().trim_start_matches("0x")).unwrap())
+        .collect();
+    let value = ivory_state::verify(state.root_hash(), addr.as_bytes(), &encoded)
+        .unwrap()
+        .unwrap();
+    let decoded: Account = bincode::deserialize(&value).unwrap();
+    assert_eq!(decoded.balance, U256::from(7u64));
+    assert_eq!(out["storageProof"].as_array().unwrap().len(), 1);
+}
+
 #[test]
 fn unknown_method_maps_jsonrpc_code() {
     let err: ivory_rpc::JsonRpcError = RpcError::MethodNotFound("x".into()).into();
