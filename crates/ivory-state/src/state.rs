@@ -6,7 +6,7 @@ use std::sync::Arc;
 use ivory_core::Account;
 use ivory_primitives::{Address, Bytes, H256, U256};
 
-use crate::trie::patricia_root;
+use crate::trie::{patricia_nodes, patricia_root};
 use parking_lot::RwLock;
 
 /// In-memory account and storage maps.
@@ -123,6 +123,22 @@ impl StateDB {
             pairs.push((addr.as_bytes().to_vec(), value));
         }
         patricia_root(&pairs)
+    }
+
+    /// Encoded Patricia nodes for the current account trie (for persist).
+    #[must_use]
+    pub fn trie_nodes(&self) -> Vec<(H256, Vec<u8>)> {
+        self.sync_all_storage_roots();
+        let accounts = self.accounts.read();
+        let mut pairs = Vec::new();
+        for (addr, acc) in accounts.iter() {
+            if acc.is_empty() {
+                continue;
+            }
+            let value = bincode::serialize(acc).expect("account bincode");
+            pairs.push((addr.as_bytes().to_vec(), value));
+        }
+        patricia_nodes(&pairs).1
     }
 }
 

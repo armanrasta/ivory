@@ -6,4 +6,4 @@ pub mod state;
 pub mod trie;
 
 pub use state::StateDB;
-pub use trie::{empty_root, patricia_root};
+pub use trie::{empty_root, patricia_nodes, patricia_root};

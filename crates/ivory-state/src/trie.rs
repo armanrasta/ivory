@@ -32,20 +32,85 @@ pub fn empty_root() -> H256 {
 /// Duplicate keys keep the last value. Order of `pairs` does not matter.
 #[must_use]
 pub fn patricia_root(pairs: &[(Vec<u8>, Vec<u8>)]) -> H256 {
+    patricia_nodes(pairs).0
+}
+
+/// Root plus every encoded node (`hash → bincode(TrieNode)`).
+#[must_use]
+pub fn patricia_nodes(pairs: &[(Vec<u8>, Vec<u8>)]) -> (H256, Vec<(H256, Vec<u8>)>) {
+    let mut nodes = Vec::new();
     if pairs.is_empty() {
-        return empty_root();
+        let root = store_node(&TrieNode::Empty, &mut nodes);
+        return (root, nodes);
     }
     let mut map = std::collections::BTreeMap::new();
     for (key, value) in pairs {
         map.insert(to_nibbles(key), value.clone());
     }
     let items: Vec<(Vec<u8>, Vec<u8>)> = map.into_iter().collect();
-    hash_node(&build_node(&items))
+    let root = store_tree(&items, &mut nodes);
+    (root, nodes)
 }
 
 fn hash_node(node: &TrieNode) -> H256 {
     let bytes = bincode::serialize(node).expect("trie node bincode");
     keccak256(&bytes)
+}
+
+fn store_node(node: &TrieNode, out: &mut Vec<(H256, Vec<u8>)>) -> H256 {
+    let bytes = bincode::serialize(node).expect("trie node bincode");
+    let h = keccak256(&bytes);
+    out.push((h, bytes));
+    h
+}
+
+fn store_tree(items: &[(Vec<u8>, Vec<u8>)], out: &mut Vec<(H256, Vec<u8>)>) -> H256 {
+    store_node(&build_node_collected(items, out), out)
+}
+
+fn build_node_collected(items: &[(Vec<u8>, Vec<u8>)], out: &mut Vec<(H256, Vec<u8>)>) -> TrieNode {
+    if items.is_empty() {
+        return TrieNode::Empty;
+    }
+    if items.len() == 1 {
+        let (path, value) = &items[0];
+        return TrieNode::Leaf {
+            path: path.clone(),
+            value: value.clone(),
+        };
+    }
+    let prefix = common_prefix_len(items);
+    if prefix > 0 {
+        let stripped: Vec<(Vec<u8>, Vec<u8>)> = items
+            .iter()
+            .map(|(k, v)| (k[prefix..].to_vec(), v.clone()))
+            .collect();
+        return TrieNode::Extension {
+            path: items[0].0[..prefix].to_vec(),
+            child: store_tree(&stripped, out),
+        };
+    }
+    let mut children = [None; 16];
+    let mut value = None;
+    for i in 0u8..16 {
+        let group: Vec<(Vec<u8>, Vec<u8>)> = items
+            .iter()
+            .filter(|(k, _)| k.first() == Some(&i))
+            .map(|(k, v)| (k[1..].to_vec(), v.clone()))
+            .collect();
+        if !group.is_empty() {
+            children[usize::from(i)] = Some(store_tree(&group, out));
+        }
+    }
+    for (key, val) in items {
+        if key.is_empty() {
+            value = Some(val.clone());
+        }
+    }
+    TrieNode::Branch {
+        children: Box::new(children),
+        value,
+    }
 }
 
 fn to_nibbles(bytes: &[u8]) -> Vec<u8> {
@@ -71,51 +136,6 @@ fn common_prefix_len(items: &[(Vec<u8>, Vec<u8>)]) -> usize {
         n = n.min(shared);
     }
     n
-}
-
-fn build_node(items: &[(Vec<u8>, Vec<u8>)]) -> TrieNode {
-    if items.is_empty() {
-        return TrieNode::Empty;
-    }
-    if items.len() == 1 {
-        let (path, value) = &items[0];
-        return TrieNode::Leaf {
-            path: path.clone(),
-            value: value.clone(),
-        };
-    }
-    let prefix = common_prefix_len(items);
-    if prefix > 0 {
-        let stripped: Vec<(Vec<u8>, Vec<u8>)> = items
-            .iter()
-            .map(|(k, v)| (k[prefix..].to_vec(), v.clone()))
-            .collect();
-        return TrieNode::Extension {
-            path: items[0].0[..prefix].to_vec(),
-            child: hash_node(&build_node(&stripped)),
-        };
-    }
-    let mut children = [None; 16];
-    let mut value = None;
-    for i in 0u8..16 {
-        let group: Vec<(Vec<u8>, Vec<u8>)> = items
-            .iter()
-            .filter(|(k, _)| k.first() == Some(&i))
-            .map(|(k, v)| (k[1..].to_vec(), v.clone()))
-            .collect();
-        if !group.is_empty() {
-            children[usize::from(i)] = Some(hash_node(&build_node(&group)));
-        }
-    }
-    for (key, val) in items {
-        if key.is_empty() {
-            value = Some(val.clone());
-        }
-    }
-    TrieNode::Branch {
-        children: Box::new(children),
-        value,
-    }
 }
 
 #[cfg(test)]

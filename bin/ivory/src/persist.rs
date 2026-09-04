@@ -12,18 +12,45 @@ const KEY_HEAD: &[u8] = b"head";
 /// On-disk canonical chain (blocks by hash, height index, head).
 pub struct ChainPersist {
     db: RocksDbBackend,
+    archive: bool,
+    archive_keep: u64,
 }
 
 impl ChainPersist {
-    /// Open (or create) `{data-dir}/chain`.
+    /// Open (or create) `{data-dir}/chain` (archive all bodies).
     ///
     /// # Errors
     ///
     /// RocksDB open failures.
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_with(path, true, 256)
+    }
+
+    /// Open with archive policy.
+    ///
+    /// # Errors
+    ///
+    /// RocksDB open failures.
+    pub fn open_with(path: &Path, archive: bool, archive_keep: u64) -> Result<Self> {
         std::fs::create_dir_all(path).with_context(|| format!("mkdir {}", path.display()))?;
         let db = RocksDbBackend::open(path).context("open chain rocksdb")?;
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            archive,
+            archive_keep: archive_keep.max(1),
+        })
+    }
+
+    /// Whether all snapshots should be retained.
+    #[must_use]
+    pub const fn is_archive(&self) -> bool {
+        self.archive
+    }
+
+    /// In-memory snapshot window when not archiving.
+    #[must_use]
+    pub const fn archive_keep(&self) -> u64 {
+        self.archive_keep
     }
 
     /// Insert genesis into `store` from disk, or return `None` if the DB is empty.
@@ -83,11 +110,48 @@ impl ChainPersist {
             let Some(b) = store.get_block_by_number(n) else {
                 continue;
             };
-            self.put_block(&b)?;
+            let keep =
+                self.archive || n == 0 || head.header.number.saturating_sub(n) < self.archive_keep;
+            if keep {
+                self.put_block(&b)?;
+            }
             self.put_height(n, b.hash())?;
+        }
+        if let Some(h) = store.head()
+            && let Some(state) = store.state_at(&h)
+        {
+            let _ = self.persist_trie_nodes(&state.trie_nodes());
         }
         self.db.flush().context("flush chain")?;
         Ok(())
+    }
+
+    /// Persist Patricia account-trie nodes under `t` + hash.
+    ///
+    /// # Errors
+    ///
+    /// RocksDB write failures.
+    pub fn persist_trie_nodes(&self, nodes: &[(ivory_primitives::H256, Vec<u8>)]) -> Result<()> {
+        for (hash, bytes) in nodes {
+            let mut key = Vec::with_capacity(33);
+            key.push(b't');
+            key.extend_from_slice(hash.as_bytes());
+            self.db.put(&key, bytes).context("write trie node")?;
+        }
+        self.db.flush().context("flush trie nodes")?;
+        Ok(())
+    }
+
+    /// Load a persisted trie node.
+    ///
+    /// # Errors
+    ///
+    /// RocksDB read failures.
+    pub fn get_trie_node(&self, hash: &H256) -> Result<Option<Vec<u8>>> {
+        let mut key = Vec::with_capacity(33);
+        key.push(b't');
+        key.extend_from_slice(hash.as_bytes());
+        self.db.get(&key).context("read trie node")
     }
 
     fn put_block(&self, block: &Block) -> Result<()> {
@@ -144,7 +208,7 @@ fn block_key(hash: &H256) -> Vec<u8> {
 mod tests {
     use ivory_chain::BlockStore;
     use ivory_consensus::{ConsensusEngine, PoAConsensus};
-    use ivory_core::{Block, BlockHeader};
+    use ivory_core::{Block, BlockHeader, empty_list_roots};
     use ivory_crypto::keypair_from_byte;
     use ivory_primitives::{Bytes, H256, U256};
 
@@ -153,6 +217,7 @@ mod tests {
     fn sealed_genesis(ts: u64) -> Block {
         let (sk, _, miner) = keypair_from_byte(1);
         let poa = PoAConsensus::from_secret(&sk).unwrap();
+        let (tx_root, rx_root) = empty_list_roots();
         let mut header = BlockHeader {
             number: 0,
             parent_hash: H256::ZERO,
@@ -161,8 +226,8 @@ mod tests {
             gas_limit: 30_000_000,
             gas_used: 0,
             state_root: H256::ZERO,
-            transactions_root: H256::ZERO,
-            receipts_root: H256::ZERO,
+            transactions_root: tx_root,
+            receipts_root: rx_root,
             difficulty: U256::ZERO,
             extra_data: Bytes::new(),
         };
@@ -205,6 +270,32 @@ mod tests {
     }
 
     #[test]
+    fn persist_writes_patricia_nodes() {
+        use ivory_core::Account;
+        use ivory_state::StateDB;
+
+        let dir = tempfile::tempdir().unwrap();
+        let persist = ChainPersist::open(dir.path()).unwrap();
+        let g = sealed_genesis(1);
+        let store = BlockStore::new(poa());
+        store.insert_genesis(g.clone()).unwrap();
+        let state = StateDB::new();
+        let mut acc = Account::new();
+        acc.balance = U256::from(7u64);
+        state.set_account(keypair_from_byte(2).2, acc);
+        store.record_state(g.hash(), state.fork());
+        persist.persist_canonical(&store, &g).unwrap();
+        let nodes = state.trie_nodes();
+        assert!(!nodes.is_empty());
+        for (hash, bytes) in &nodes {
+            assert_eq!(
+                persist.get_trie_node(hash).unwrap().as_deref(),
+                Some(bytes.as_slice())
+            );
+        }
+    }
+
+    #[test]
     fn persist_reorg_reload_matches_replay() {
         use ivory_chain::{BlockProducer, ProduceParams, import_and_apply};
         use ivory_core::Account;
@@ -224,6 +315,7 @@ mod tests {
         funded.balance = U256::from(1_000_000u64);
         genesis_state.set_account(from, funded);
 
+        let (tx_root, rx_root) = empty_list_roots();
         let mut header = BlockHeader {
             number: 0,
             parent_hash: H256::ZERO,
@@ -232,8 +324,8 @@ mod tests {
             gas_limit: 30_000_000,
             gas_used: 0,
             state_root: genesis_state.root_hash(),
-            transactions_root: H256::ZERO,
-            receipts_root: H256::ZERO,
+            transactions_root: tx_root,
+            receipts_root: rx_root,
             difficulty: U256::ZERO,
             extra_data: Bytes::new(),
         };
@@ -324,6 +416,40 @@ mod tests {
             replay
                 .get_account(&to_a)
                 .is_none_or(|a| a.balance.is_zero())
+        );
+    }
+
+    #[test]
+    fn load_refuses_bad_transactions_root() {
+        use ivory_crypto::signed_transfer;
+
+        let dir = tempfile::tempdir().unwrap();
+        let persist = ChainPersist::open(dir.path()).unwrap();
+        let g = sealed_genesis(1);
+        let store = BlockStore::new(poa());
+        store.insert_genesis(g.clone()).unwrap();
+        persist.persist_canonical(&store, &g).unwrap();
+        drop(persist);
+
+        let db = ivory_storage::RocksDbBackend::open(dir.path()).unwrap();
+        let mut key = Vec::from([b'b']);
+        key.extend_from_slice(g.hash().as_bytes());
+        let mut bad = g.clone();
+        bad.transactions.push(signed_transfer(
+            &keypair_from_byte(2).0,
+            keypair_from_byte(3).2,
+            0,
+            U256::from(1u64),
+            21_000,
+        ));
+        db.put(&key, &bincode::serialize(&bad).unwrap()).unwrap();
+        drop(db);
+
+        let persist = ChainPersist::open(dir.path()).unwrap();
+        let store2 = BlockStore::new(poa());
+        assert!(
+            persist.load_into(&store2, &g).is_err(),
+            "replay must re-validate list roots"
         );
     }
 

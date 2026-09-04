@@ -107,6 +107,47 @@ impl BlockStore {
         self.snapshots.write().insert(hash, state.fork());
     }
 
+    /// Drop transaction/receipt bodies below `keep_from` unless `archive`.
+    pub fn drop_bodies_below(&self, keep_from: u64, archive: bool) {
+        if archive {
+            return;
+        }
+        let mut by_hash = self.by_hash.write();
+        for block in by_hash.values_mut() {
+            if block.header.number < keep_from {
+                block.transactions.clear();
+                block.receipts.clear();
+            }
+        }
+    }
+
+    /// Drop snapshots that are not on the canonical path.
+    pub fn prune_snapshots(&self) {
+        let Some(head) = self.head() else {
+            return;
+        };
+        let keep: std::collections::HashSet<H256> = self.chain_from(head).into_iter().collect();
+        self.snapshots.write().retain(|h, _| keep.contains(h));
+    }
+
+    /// Canonical snapshots only, then drop bodies/snapshots older than `keep` heights.
+    pub fn prune_snapshots_keep(&self, keep: u64) {
+        self.prune_snapshots();
+        let Some(head) = self.head_block() else {
+            return;
+        };
+        let cutoff = head.header.number.saturating_sub(keep.saturating_sub(1));
+        self.drop_bodies_below(cutoff, false);
+        let keep_hashes: std::collections::HashSet<H256> = self
+            .chain_from(head.hash())
+            .into_iter()
+            .filter(|h| self.get_block(h).is_some_and(|b| b.header.number >= cutoff))
+            .collect();
+        self.snapshots
+            .write()
+            .retain(|h, _| keep_hashes.contains(h));
+    }
+
     /// Genesis-to-tip hashes for `tip` (parent walk).
     #[must_use]
     pub fn chain_from(&self, tip: H256) -> Vec<H256> {
@@ -282,7 +323,7 @@ impl BlockStore {
 #[cfg(test)]
 mod tests {
     use ivory_consensus::{ConsensusEngine, PoAConsensus, encode_seals};
-    use ivory_core::{Block, BlockHeader};
+    use ivory_core::{Block, BlockHeader, empty_list_roots};
     use ivory_crypto::keypair_from_byte;
     use ivory_primitives::{Address, Bytes, H256, SecretKey, U256};
 
@@ -301,6 +342,7 @@ mod tests {
     }
 
     fn sealed_header(number: u64, parent: H256, ts: u64) -> BlockHeader {
+        let (tx_root, rx_root) = empty_list_roots();
         let mut h = BlockHeader {
             number,
             parent_hash: parent,
@@ -309,8 +351,8 @@ mod tests {
             gas_limit: 30_000_000,
             gas_used: 0,
             state_root: H256::ZERO,
-            transactions_root: H256::ZERO,
-            receipts_root: H256::ZERO,
+            transactions_root: tx_root,
+            receipts_root: rx_root,
             difficulty: U256::ZERO,
             extra_data: Bytes::new(),
         };
@@ -471,11 +513,48 @@ mod tests {
         let h0 = store.insert_genesis(genesis()).unwrap().hash;
         let a1 = store.insert_block(blk(1, h0, 10)).unwrap();
         let b1 = store.insert_block(blk(1, h0, 11)).unwrap();
-        let b2 = store.insert_block(blk(2, b1.hash, 12)).unwrap();
-        assert!(b2.head_changed);
-        assert_eq!(b2.old_head, Some(a1.hash));
-        assert_eq!(b2.new_head, b2.hash);
-        assert_eq!(b2.ancestor, h0);
+        let (head1, other1) = if store.head() == Some(a1.hash) {
+            (a1, b1)
+        } else {
+            (b1, a1)
+        };
+        let taller = store.insert_block(blk(2, other1.hash, 12)).unwrap();
+        assert!(taller.head_changed);
+        assert_eq!(taller.old_head, Some(head1.hash));
+        assert_eq!(taller.new_head, taller.hash);
+        assert_eq!(taller.ancestor, h0);
+    }
+
+    #[test]
+    fn prune_snapshots_drops_side_fork() {
+        let store = BlockStore::new(poa());
+        let h0 = store.insert_genesis(genesis()).unwrap().hash;
+        store.record_state(h0, StateDB::new());
+        let a1 = store.insert_block(blk(1, h0, 10)).unwrap().hash;
+        store.record_state(a1, StateDB::new());
+        let b1 = store.insert_block(blk(1, h0, 11)).unwrap().hash;
+        store.record_state(b1, StateDB::new());
+        let taller_parent = if store.head() == Some(a1) { b1 } else { a1 };
+        let h2 = store.insert_block(blk(2, taller_parent, 12)).unwrap().hash;
+        store.record_state(h2, StateDB::new());
+        store.prune_snapshots();
+        assert!(store.state_at(&h2).is_some());
+        let loser = if taller_parent == a1 { b1 } else { a1 };
+        assert!(store.state_at(&loser).is_none());
+    }
+
+    #[test]
+    fn prune_snapshots_keep_drops_old_canonical_snapshot() {
+        let store = BlockStore::new(poa());
+        let h0 = store.insert_genesis(genesis()).unwrap().hash;
+        store.record_state(h0, StateDB::new());
+        let h1 = store.insert_block(blk(1, h0, 2)).unwrap().hash;
+        store.record_state(h1, StateDB::new());
+        let h2 = store.insert_block(blk(2, h1, 3)).unwrap().hash;
+        store.record_state(h2, StateDB::new());
+        store.prune_snapshots_keep(1);
+        assert!(store.state_at(&h0).is_none());
+        assert!(store.state_at(&h2).is_some());
     }
 
     #[test]

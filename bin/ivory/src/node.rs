@@ -8,14 +8,16 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use ivory_chain::{BlockProducer, BlockStore, ProduceParams, import_and_apply};
 use ivory_consensus::{ConsensusEngine, PoAConsensus};
-use ivory_core::{Account, Block, BlockHeader};
+use ivory_core::{Account, Block, BlockHeader, empty_list_roots};
 use ivory_crypto::address_from_secret;
 use ivory_executor::{ExecutionContext, Executor};
 use ivory_network::{
-    Multiaddr, NetworkConfig, NetworkEvent, NetworkHandle, start as start_network,
+    Multiaddr, NetworkConfig, NetworkEvent, NetworkHandle, PeerId, start as start_network,
 };
 use ivory_primitives::{Address, Bytes, H256, SecretKey, U256};
-use ivory_rpc::{NodeRole, RpcContext, RpcEvent, RpcHandler, RpcHttpConfig, router_with_config};
+use ivory_rpc::{
+    IvoryMetrics, NodeRole, RpcContext, RpcEvent, RpcHandler, RpcHttpConfig, router_with_config,
+};
 use ivory_state::StateDB;
 use ivory_txpool::{TransactionPool, TxOrigin};
 use tokio::net::TcpListener;
@@ -24,6 +26,25 @@ use tokio::task::JoinHandle;
 
 use crate::config::{DataPaths, GenesisFile, NodeFileConfig};
 use crate::persist::ChainPersist;
+
+const READ_ONLY_METHODS: &[&str] = &[
+    "eth_chainId",
+    "eth_blockNumber",
+    "eth_getBalance",
+    "eth_getCode",
+    "eth_getStorageAt",
+    "eth_getBlockByNumber",
+    "eth_getBlockByHash",
+    "eth_getTransactionByHash",
+    "eth_getTransactionReceipt",
+    "eth_getTransactionCount",
+    "eth_call",
+    "eth_estimateGas",
+    "eth_getLogs",
+    "ivory_nodeInfo",
+    "ivory_listContracts",
+    "ivory_getHeaderByNumber",
+];
 
 /// Running node handles.
 pub struct Node {
@@ -79,7 +100,11 @@ pub async fn run_node(
         state.set_account(addr, acc);
     }
 
-    let persist = Arc::new(ChainPersist::open(&paths.chain)?);
+    let persist = Arc::new(ChainPersist::open_with(
+        &paths.chain,
+        cfg.archive,
+        cfg.archive_keep,
+    )?);
     let store = Arc::new(BlockStore::new(poa.clone()));
     let genesis_block = genesis_block(&genesis)?;
     let genesis_hash = genesis_block.hash();
@@ -109,6 +134,12 @@ pub async fn run_node(
 
     let producer = BlockProducer::with_gas_limit(genesis.gas_limit);
 
+    let allowlist = cfg
+        .p2p_allowlist
+        .iter()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse::<PeerId>().context("p2p allowlist peer id"))
+        .collect::<Result<Vec<_>>>()?;
     let net_cfg = NetworkConfig {
         listen: cfg.p2p_listen.parse().context("p2p listen multiaddr")?,
         bootstrap: cfg
@@ -116,6 +147,7 @@ pub async fn run_node(
             .iter()
             .map(|s| s.parse().context("bootstrap multiaddr"))
             .collect::<Result<Vec<_>>>()?,
+        allowlist,
     };
     let (network, mut events) = start_network(net_cfg).await?;
 
@@ -162,6 +194,29 @@ pub async fn run_node(
             _ = shutdown_rpc.changed() => {}
         }
     });
+    let mut extra_rpc = Vec::new();
+    if !cfg.rpc_read_addr.is_empty() {
+        let read_bind: SocketAddr = cfg.rpc_read_addr.parse().context("rpc read addr")?;
+        let read_listener = TcpListener::bind(read_bind)
+            .await
+            .context("bind rpc read")?;
+        let read_handler = RpcHandler::new(
+            handler
+                .context()
+                .clone()
+                .with_allow_methods(READ_ONLY_METHODS.iter().map(|s| (*s).to_string()).collect()),
+        );
+        let mut shutdown_read = shutdown.clone();
+        extra_rpc.push(tokio::spawn(async move {
+            tokio::select! {
+                _ = axum::serve(
+                    read_listener,
+                    router_with_config(read_handler, RpcHttpConfig::from_env()),
+                ) => {}
+                _ = shutdown_read.changed() => {}
+            }
+        }));
+    }
 
     let (listen_tx, listen_rx) = oneshot::channel();
     let orphans: Arc<Mutex<HashMap<H256, Block>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -172,6 +227,7 @@ pub async fn run_node(
     let import_orphans = Arc::clone(&orphans);
     let import_persist = Arc::clone(&persist);
     let import_events = handler.context().events.clone();
+    let import_metrics = Arc::clone(&handler.context().metrics);
     let mut shutdown_import = shutdown.clone();
     let import_task = tokio::spawn(async move {
         let mut listen_tx = Some(listen_tx);
@@ -188,11 +244,14 @@ pub async fn run_node(
                             }
                         }
                         NetworkEvent::TxReceived(tx) => {
+                            import_metrics.p2p_message("tx");
                             if let Ok(hash) = import_pool.add_transaction(tx, TxOrigin::Remote) {
+                                import_metrics.set_txpool_pending(import_pool.pending_count() as u64);
                                 let _ = import_events.send(RpcEvent::NewPendingTx { hash });
                             }
                         }
                         NetworkEvent::BlockReceived(block) => {
+                            import_metrics.p2p_message("block");
                             import_block(
                                 &import_store,
                                 &import_exec,
@@ -201,15 +260,19 @@ pub async fn run_node(
                                 &import_persist,
                                 &import_orphans,
                                 &import_events,
+                                Some(Arc::clone(&import_metrics)),
                                 block,
                             );
                         }
                         NetworkEvent::BlockRequest(hash) => {
+                            import_metrics.p2p_message("get_block");
                             if let Some(block) = import_store.get_block(&hash) {
                                 let _ = import_net.broadcast_block(block);
                             }
                         }
-                        _ => {}
+                        NetworkEvent::PeerConnected(_) | NetworkEvent::PeerDisconnected(_) => {
+                            import_metrics.set_p2p_peers(import_net.peer_count() as u64);
+                        }
                     }
                 }
                 _ = shutdown_import.changed() => break,
@@ -223,6 +286,7 @@ pub async fn run_node(
         .context("p2p listen oneshot")?;
 
     let mut tasks = vec![rpc_task, import_task];
+    tasks.extend(extra_rpc);
 
     if is_producer {
         let prod_store = Arc::clone(&store);
@@ -231,6 +295,7 @@ pub async fn run_node(
         let prod_net = network.clone();
         let prod_persist = Arc::clone(&persist);
         let prod_events = handler.context().events.clone();
+        let prod_metrics = Arc::clone(&handler.context().metrics);
         let interval = Duration::from_millis(cfg.block_interval_ms.max(50));
         let key = validator_key;
         let consensus = poa;
@@ -250,6 +315,7 @@ pub async fn run_node(
                         };
                         let trial_exec = Executor::new(parent_state);
                         let ts = parent.header.timestamp.saturating_add(1);
+                        let started = std::time::Instant::now();
                         match producer.produce_block(ProduceParams {
                             parent: &parent,
                             pool: &prod_pool,
@@ -261,6 +327,9 @@ pub async fn run_node(
                             max_txs: 128,
                         }) {
                             Ok(block) => {
+                                prod_metrics
+                                    .observe_produce_seconds(started.elapsed().as_secs_f64());
+                                prod_metrics.inc_blocks_produced();
                                 match import_and_apply(
                                     &prod_store,
                                     prod_exec.state(),
@@ -270,12 +339,23 @@ pub async fn run_node(
                                     Ok(outcome) => {
                                         if outcome.head_changed {
                                             let _ = prod_events.send(RpcEvent::new_head(&block));
+                                            let _ = prod_events.send(RpcEvent::new_logs(&block));
                                         }
+                                        prod_metrics.set_head(
+                                            block.header.number,
+                                            block.header.timestamp,
+                                        );
+                                        prod_metrics.set_txpool_pending(
+                                            prod_pool.pending_count() as u64,
+                                        );
                                         if let Err(e) =
                                             prod_persist.persist_canonical(&prod_store, &block)
                                         {
                                             tracing::warn!(error = %e, "persist produced block");
                                         }
+                                        let _ = prod_persist
+                                            .persist_trie_nodes(&prod_exec.state().trie_nodes());
+                                        prune_store(&prod_store, &prod_persist);
                                         let _ = prod_net.broadcast_block(block);
                                     }
                                     Err(e) => tracing::debug!(error = %e, "import produced block"),
@@ -305,6 +385,7 @@ pub async fn run_node(
 fn genesis_block(genesis: &GenesisFile) -> Result<Block> {
     let miner = Address::from_hex(&genesis.validator.address).context("validator address")?;
     let extra = decode_extra(&genesis.extra_data)?;
+    let (tx_root, rx_root) = empty_list_roots();
     Ok(Block {
         header: BlockHeader {
             number: 0,
@@ -314,14 +395,22 @@ fn genesis_block(genesis: &GenesisFile) -> Result<Block> {
             gas_limit: genesis.gas_limit,
             gas_used: 0,
             state_root: genesis.alloc_state_root()?,
-            transactions_root: H256::ZERO,
-            receipts_root: H256::ZERO,
+            transactions_root: tx_root,
+            receipts_root: rx_root,
             difficulty: U256::ZERO,
             extra_data: extra,
         },
         transactions: Vec::new(),
         receipts: Vec::new(),
     })
+}
+
+fn prune_store(store: &BlockStore, persist: &ChainPersist) {
+    if persist.is_archive() {
+        store.prune_snapshots();
+    } else {
+        store.prune_snapshots_keep(persist.archive_keep());
+    }
 }
 
 fn decode_extra(s: &str) -> Result<Bytes> {
@@ -334,6 +423,19 @@ fn decode_extra(s: &str) -> Result<Bytes> {
 }
 
 #[allow(clippy::too_many_arguments)]
+fn emit_logs(events: &tokio::sync::broadcast::Sender<RpcEvent>, block: &Block) {
+    let logs: Vec<ivory_core::Log> = block.receipts.iter().flat_map(|r| r.logs.clone()).collect();
+    if logs.is_empty() {
+        return;
+    }
+    let _ = events.send(RpcEvent::NewLogs {
+        logs,
+        block_number: block.header.number,
+        block_hash: block.hash(),
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
 fn import_block(
     store: &BlockStore,
     executor: &Executor,
@@ -342,16 +444,25 @@ fn import_block(
     persist: &ChainPersist,
     orphans: &Mutex<HashMap<H256, Block>>,
     events: &tokio::sync::broadcast::Sender<RpcEvent>,
+    metrics: Option<Arc<IvoryMetrics>>,
     block: Block,
 ) {
     match import_and_apply(store, executor.state(), pool, block.clone()) {
         Ok(outcome) => {
+            if let Some(m) = metrics.as_deref() {
+                m.inc_blocks_imported();
+                m.set_head(block.header.number, block.header.timestamp);
+                m.set_txpool_pending(pool.pending_count() as u64);
+            }
             if outcome.head_changed {
                 let _ = events.send(RpcEvent::new_head(&block));
+                emit_logs(events, &block);
             }
             if let Err(e) = persist.persist_canonical(store, &block) {
                 tracing::warn!(error = %e, "persist imported block");
             }
+            let _ = persist.persist_trie_nodes(&executor.state().trie_nodes());
+            prune_store(store, persist);
             let hash = block.hash();
             let mut pending = orphans.lock().unwrap();
             let children: Vec<Block> = pending
@@ -363,7 +474,15 @@ fn import_block(
                 pending.remove(&child.hash());
                 drop(pending);
                 import_block(
-                    store, executor, pool, network, persist, orphans, events, child,
+                    store,
+                    executor,
+                    pool,
+                    network,
+                    persist,
+                    orphans,
+                    events,
+                    metrics.clone(),
+                    child,
                 );
                 pending = orphans.lock().unwrap();
             }

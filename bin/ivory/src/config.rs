@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use ivory_consensus::{PoAConfig, Validator};
-use ivory_core::Account;
+use ivory_core::{Account, empty_list_roots};
 use ivory_crypto::secret_from_bytes;
 use ivory_primitives::{Address, PublicKey, SecretKey, U256};
 use ivory_state::StateDB;
@@ -81,6 +81,26 @@ pub struct NodeFileConfig {
     /// `master` produces (if authorized); `slave` never produces.
     #[serde(default)]
     pub role: ServerRole,
+    /// libp2p peer ids allowed to stay connected. Empty = current open Noise.
+    #[serde(default)]
+    pub p2p_allowlist: Vec<String>,
+    /// Keep all block bodies (`true`) or only the last `archive_keep` heights.
+    #[serde(default = "default_archive")]
+    pub archive: bool,
+    /// Canonical heights retained when `archive` is false.
+    #[serde(default = "default_archive_keep")]
+    pub archive_keep: u64,
+    /// Optional second JSON-RPC bind with a read-only method allowlist.
+    #[serde(default)]
+    pub rpc_read_addr: String,
+}
+
+fn default_archive() -> bool {
+    true
+}
+
+fn default_archive_keep() -> u64 {
+    256
 }
 
 impl Default for NodeFileConfig {
@@ -93,6 +113,10 @@ impl Default for NodeFileConfig {
             block_interval_ms: 2_000,
             contracts_dir: String::new(),
             role: ServerRole::Master,
+            p2p_allowlist: Vec::new(),
+            archive: true,
+            archive_keep: 256,
+            rpc_read_addr: String::new(),
         }
     }
 }
@@ -263,6 +287,7 @@ pub fn init_datadir_with(root: &Path, opts: InitOpts) -> Result<DataPaths> {
     let (sk, pk, addr) = ivory_crypto::generate_keypair();
     write_secret_key(&paths.validator_key, &sk)?;
     let poa = ivory_consensus::PoAConsensus::from_secret(&sk)?;
+    let (tx_root, rx_root) = empty_list_roots();
     let mut header = ivory_core::BlockHeader {
         number: 0,
         parent_hash: ivory_primitives::H256::ZERO,
@@ -271,8 +296,8 @@ pub fn init_datadir_with(root: &Path, opts: InitOpts) -> Result<DataPaths> {
         gas_limit: 30_000_000,
         gas_used: 0,
         state_root: ivory_primitives::H256::ZERO,
-        transactions_root: ivory_primitives::H256::ZERO,
-        receipts_root: ivory_primitives::H256::ZERO,
+        transactions_root: tx_root,
+        receipts_root: rx_root,
         difficulty: ivory_primitives::U256::ZERO,
         extra_data: ivory_primitives::Bytes::new(),
     };
