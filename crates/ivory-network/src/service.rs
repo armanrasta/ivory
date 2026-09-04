@@ -1,5 +1,7 @@
 //! Swarm service, handle, and events.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use ivory_core::{Block, Transaction};
@@ -61,6 +63,7 @@ enum Command {
 pub struct NetworkHandle {
     tx: mpsc::UnboundedSender<Command>,
     peer_id: PeerId,
+    peers: Arc<AtomicUsize>,
 }
 
 impl NetworkHandle {
@@ -68,6 +71,18 @@ impl NetworkHandle {
     #[must_use]
     pub fn peer_id(&self) -> PeerId {
         self.peer_id
+    }
+
+    /// Live connection count (established minus closed).
+    #[must_use]
+    pub fn peer_count(&self) -> usize {
+        self.peers.load(Ordering::Relaxed)
+    }
+
+    /// Shared counter for RPC `ivory_nodeInfo`.
+    #[must_use]
+    pub fn peer_count_handle(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.peers)
     }
 
     /// Gossip a sealed block.
@@ -143,13 +158,15 @@ pub async fn start(
 
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
     let (event_tx, event_rx) = mpsc::unbounded_channel();
+    let peers = Arc::new(AtomicUsize::new(0));
 
-    tokio::spawn(run_loop(swarm, cmd_rx, event_tx));
+    tokio::spawn(run_loop(swarm, cmd_rx, event_tx, Arc::clone(&peers)));
 
     Ok((
         NetworkHandle {
             tx: cmd_tx,
             peer_id,
+            peers,
         },
         event_rx,
     ))
@@ -199,6 +216,7 @@ async fn run_loop(
     mut swarm: Swarm<IvoryBehaviour>,
     mut cmd_rx: mpsc::UnboundedReceiver<Command>,
     event_tx: mpsc::UnboundedSender<NetworkEvent>,
+    peers: Arc<AtomicUsize>,
 ) {
     loop {
         tokio::select! {
@@ -211,7 +229,7 @@ async fn run_loop(
                 }
             }
             event = swarm.select_next_some() => {
-                handle_swarm_event(&mut swarm, event, &event_tx);
+                handle_swarm_event(&mut swarm, event, &event_tx, &peers);
             }
         }
     }
@@ -234,6 +252,7 @@ fn handle_swarm_event(
     swarm: &mut Swarm<IvoryBehaviour>,
     event: SwarmEvent<IvoryBehaviourEvent>,
     event_tx: &mpsc::UnboundedSender<NetworkEvent>,
+    peers: &AtomicUsize,
 ) {
     match event {
         SwarmEvent::NewListenAddr { address, .. } => {
@@ -241,6 +260,7 @@ fn handle_swarm_event(
         }
         SwarmEvent::ConnectionEstablished { peer_id, .. } => {
             swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+            peers.fetch_add(1, Ordering::Relaxed);
             let _ = event_tx.send(NetworkEvent::PeerConnected(peer_id));
         }
         SwarmEvent::ConnectionClosed { peer_id, .. } => {
@@ -248,6 +268,9 @@ fn handle_swarm_event(
                 .behaviour_mut()
                 .gossipsub
                 .remove_explicit_peer(&peer_id);
+            let _ = peers.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                Some(n.saturating_sub(1))
+            });
             let _ = event_tx.send(NetworkEvent::PeerDisconnected(peer_id));
         }
         SwarmEvent::Behaviour(IvoryBehaviourEvent::Gossipsub(gossipsub::Event::Message {

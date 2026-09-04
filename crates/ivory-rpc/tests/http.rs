@@ -128,3 +128,22 @@ async fn http_method_not_found() {
     .await;
     assert_eq!(resp.error.as_ref().unwrap().code, -32601);
 }
+
+#[tokio::test]
+async fn http_serves_panel() {
+    let (addr, _h) = spawn_server().await;
+    let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let (mut reader, mut writer) = stream.into_split();
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    writer
+        .write_all(b"GET /ui HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let mut buf = Vec::new();
+    reader.read_to_end(&mut buf).await.unwrap();
+    let text = String::from_utf8_lossy(&buf);
+    assert!(text.contains("200"));
+    assert!(text.contains("text/html"));
+    assert!(text.contains("ivory-ui-theme"));
+    assert!(text.contains("ivory_nodeInfo"));
+}

@@ -5,6 +5,10 @@ is not implemented.
 
 Default bind: `127.0.0.1:8545` (`rpc_addr` in `config.toml`).
 
+Read-only explorer: `GET /ui` (and `GET /ui/`). Open
+`http://127.0.0.1:8545/ui` on the producer and `http://127.0.0.1:8546/ui` on a
+follower. The page does not submit transactions.
+
 ## Methods
 
 | Method | Notes |
@@ -19,6 +23,8 @@ Default bind: `127.0.0.1:8545` (`rpc_addr` in `config.toml`).
 | `eth_getTransactionCount` | Live account nonce (block tags ignored) |
 | `eth_getTransactionReceipt` | `logs`, `contractAddress` on CREATE |
 | `eth_sendRawTransaction` | Hex of **bincode** `Transaction` |
+| `ivory_nodeInfo` | Role (`producer` / `follower`), address, chain id, peer id, peers, pending, head, bootstrap |
+| `ivory_listContracts` | CREATE addresses, code size, and file catalog (`name` / `schema` / `registered`) |
 
 Unknown methods return `-32601`. Not implemented: `eth_call`, `eth_estimateGas`,
 `eth_sendTransaction`.
@@ -33,3 +39,4 @@ Unknown methods return `-32601`. Not implemented: `eth_call`, `eth_estimateGas`,
 See [protocol.md](protocol.md) and the Python client under `sdk/python`.
 
 Quant envelopes: [quant-envelope.md](quant-envelope.md).
+Contracts: [contracts.md](contracts.md).

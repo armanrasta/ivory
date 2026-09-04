@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ivory</title>
+  <style>
+    :root {
+      --page: #F4EFE4;
+      --surface: #FFF8EE;
+      --text: #2A2418;
+      --muted: #6F6758;
+      --line: #D9D0C0;
+      --accent: #8B7355;
+    }
+    [data-theme="dark"] {
+      --page: #1A1712;
+      --surface: #262119;
+      --text: #F3EBD8;
+      --muted: #A89B86;
+      --line: #3D362C;
+      --accent: #C4B49A;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body {
+      background: var(--page);
+      color: var(--text);
+      font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem 1rem;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.15rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    main {
+      max-width: 64rem;
+      margin: 0 auto;
+      padding: 1.25rem;
+      display: grid;
+      gap: 1rem;
+    }
+    section {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 1rem 1.1rem;
+    }
+    h2 {
+      margin: 0 0 0.75rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    label {
+      display: grid;
+      gap: 0.25rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+    input, button, select {
+      font: inherit;
+      color: var(--text);
+      background: var(--page);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0.4rem 0.6rem;
+    }
+    button {
+      cursor: pointer;
+      background: var(--surface);
+    }
+    button:hover, button:focus-visible {
+      border-color: var(--accent);
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      align-items: end;
+    }
+    .row label { flex: 1 1 12rem; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+      gap: 0.75rem;
+    }
+    .stat {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0.55rem 0.7rem;
+    }
+    .stat dt {
+      margin: 0;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+    .stat dd {
+      margin: 0.15rem 0 0;
+      font-variant-numeric: tabular-nums;
+      word-break: break-all;
+    }
+    .badge {
+      display: inline-block;
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      border-radius: 999px;
+      padding: 0.05rem 0.5rem;
+      font-size: 0.75rem;
+      text-transform: lowercase;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-variant-numeric: tabular-nums;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.4rem 0.35rem;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 550; font-size: 0.8rem; }
+    a, .link {
+      color: var(--accent);
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    pre, .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.8rem;
+      font-variant-numeric: tabular-nums;
+      word-break: break-all;
+      white-space: pre-wrap;
+    }
+    pre {
+      margin: 0.4rem 0 0;
+      background: var(--page);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0.6rem;
+      max-height: 16rem;
+      overflow: auto;
+    }
+    .err { color: #8a3a2a; }
+    [data-theme="dark"] .err { color: #e0b4a8; }
+    .muted { color: var(--muted); }
+    .stack { display: grid; gap: 0.65rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Ivory ledger</h1>
+      <p class="muted" style="margin:0.15rem 0 0;font-size:0.8rem">Track blocks, records, and file-backed contracts. Not mining.</p>
+    </div>
+    <div class="row">
+      <label>Theme
+        <select id="theme" aria-label="Theme">
+          <option value="system">System</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </label>
+      <button type="button" id="refresh">Refresh</button>
+    </div>
+  </header>
+  <main>
+    <section>
+      <h2>Endpoints</h2>
+      <div class="row">
+        <label>RPC
+          <input id="rpc" spellcheck="false" autocomplete="off">
+        </label>
+        <label>Compare (optional follower)
+          <input id="compare" spellcheck="false" autocomplete="off" placeholder="http://127.0.0.1:8546">
+        </label>
+      </div>
+    </section>
+    <section>
+      <h2>Node</h2>
+      <div id="stats" class="stats"></div>
+      <p id="lag" class="muted"></p>
+    </section>
+    <section>
+      <h2>Blocks</h2>
+      <div id="blocks"></div>
+    </section>
+    <section>
+      <h2>Detail</h2>
+      <div id="detail" class="muted">Select a block, transaction, or contract.</div>
+    </section>
+    <section>
+      <h2>Contracts</h2>
+      <div id="contracts"></div>
+    </section>
+  </main>
+  <script>
+    const THEME_KEY = "ivory-ui-theme";
+    const $ = (id) => document.getElementById(id);
+
+    function applyTheme(mode) {
+      const dark =
+        mode === "dark" ||
+        (mode !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+    }
+
+    function loadTheme() {
+      const mode = localStorage.getItem(THEME_KEY) || "system";
+      $("theme").value = mode;
+      applyTheme(mode);
+    }
+
+    $("theme").addEventListener("change", () => {
+      localStorage.setItem(THEME_KEY, $("theme").value);
+      applyTheme($("theme").value);
+    });
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+      if (($("theme").value || "system") === "system") applyTheme("system");
+    });
+
+    function rpcUrl() {
+      const v = $("rpc").value.trim();
+      return v.replace(/\/$/, "") || location.origin;
+    }
+
+    async function rpc(method, params, url) {
+      const res = await fetch(url || rpcUrl(), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: params || [] }),
+      });
+      const body = await res.json();
+      if (body.error) throw new Error(body.error.message || JSON.stringify(body.error));
+      return body.result;
+    }
+
+    function hexToInt(h) {
+      if (h == null) return 0;
+      return parseInt(String(h), 16);
+    }
+
+    function short(s, n) {
+      s = String(s || "");
+      n = n || 10;
+      if (s.length <= n * 2 + 3) return s;
+      return s.slice(0, n + 2) + "…" + s.slice(-n);
+    }
+
+    function esc(s) {
+      return String(s ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    function hexBytes(hex) {
+      const h = String(hex || "").replace(/^0x/i, "");
+      if (h.length % 2) throw new Error("odd hex");
+      const out = new Uint8Array(h.length / 2);
+      for (let i = 0; i < out.length; i++) out[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16);
+      return out;
+    }
+
+    function decodeIqnt(hex) {
+      const bytes = hexBytes(hex);
+      if (bytes.length < 4) return null;
+      const magic = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
+      if (magic !== "IQNT") return null;
+      let i = 4;
+      const u8 = () => bytes[i++];
+      const u16 = () => {
+        const n = bytes[i] | (bytes[i + 1] << 8);
+        i += 2;
+        return n;
+      };
+      const u64 = () => {
+        const lo = bytes[i] | (bytes[i + 1] << 8) | (bytes[i + 2] << 16) | (bytes[i + 3] << 24);
+        const hi = bytes[i + 4] | (bytes[i + 5] << 8) | (bytes[i + 6] << 16) | (bytes[i + 7] << 24);
+        i += 8;
+        return hi * 2 ** 32 + (lo >>> 0);
+      };
+      const str = () => {
+        const n = u64();
+        const s = new TextDecoder().decode(bytes.subarray(i, i + n));
+        i += n;
+        return s;
+      };
+      const version = u16();
+      const decision_id = str();
+      const schema = str();
+      const nMetrics = u64();
+      const metrics = [];
+      for (let k = 0; k < nMetrics; k++) metrics.push([str(), str()]);
+      let content_hash = null;
+      if (u8() === 1) {
+        content_hash = "0x" + [...bytes.subarray(i, i + 32)].map((b) => b.toString(16).padStart(2, "0")).join("");
+        i += 32;
+      }
+      const cid = u8() === 1 ? str() : null;
+      if (version !== 1 || !decision_id) return null;
+      return { version, decision_id, schema, metrics, content_hash, cid };
+    }
+
+    function stat(label, value, extra) {
+      return `<div class="stat"><dt>${esc(label)}</dt><dd>${extra || ""}${esc(value)}</dd></div>`;
+    }
+
+    async function showBlock(n) {
+      const block = await rpc("eth_getBlockByNumber", ["0x" + Number(n).toString(16)]);
+      const txs = block.transactions || [];
+      $("detail").innerHTML = `
+        <div class="stack">
+          <div><strong>Block ${hexToInt(block.number)}</strong> <span class="badge">${esc(short(block.hash, 8))}</span></div>
+          <div class="muted">miner ${esc(block.miner)} · gas ${hexToInt(block.gasUsed)} / ${hexToInt(block.gasLimit)}</div>
+          <table>
+            <thead><tr><th>Tx</th></tr></thead>
+            <tbody>
+              ${txs.length ? txs.map((h) => `<tr><td><span class="link mono" data-tx="${esc(h)}">${esc(h)}</span></td></tr>`).join("") : `<tr><td class="muted">No transactions</td></tr>`}
+            </tbody>
+          </table>
+        </div>`;
+      $("detail").querySelectorAll("[data-tx]").forEach((el) => {
+        el.addEventListener("click", () => showTx(el.dataset.tx));
+      });
+    }
+
+    async function showTx(hash) {
+      const tx = await rpc("eth_getTransactionByHash", [hash]);
+      let rec = null;
+      try { rec = await rpc("eth_getTransactionReceipt", [hash]); } catch (_) {}
+      const env = tx.input ? decodeIqnt(tx.input) : null;
+      let envHtml = "";
+      if (env) {
+        envHtml = `<div><strong>Envelope</strong>
+          <pre>${esc(JSON.stringify(env, null, 2))}</pre></div>`;
+      }
+      const codeHint = rec && rec.contractAddress
+        ? `<div>Created <span class="link mono" data-contract="${esc(rec.contractAddress)}">${esc(rec.contractAddress)}</span></div>`
+        : "";
+      $("detail").innerHTML = `
+        <div class="stack">
+          <div><strong>Transaction</strong> <span class="mono">${esc(tx.hash)}</span></div>
+          <div class="muted">from ${esc(tx.from)} → ${esc(tx.to || "(create)")} · nonce ${hexToInt(tx.nonce)} · value ${esc(tx.value)}</div>
+          ${codeHint}
+          ${envHtml}
+          <div>Input<pre>${esc(tx.input || "0x")}</pre></div>
+        </div>`;
+      $("detail").querySelectorAll("[data-contract]").forEach((el) => {
+        el.addEventListener("click", () => showContract(el.dataset.contract));
+      });
+    }
+
+    async function showContract(addr) {
+      const [code, nonce, bal] = await Promise.all([
+        rpc("eth_getCode", [addr, "latest"]),
+        rpc("eth_getTransactionCount", [addr, "latest"]),
+        rpc("eth_getBalance", [addr, "latest"]),
+      ]);
+      const shown = code && code.length > 130 ? code.slice(0, 130) + "…" : code;
+      $("detail").innerHTML = `
+        <div class="stack">
+          <div><strong>Contract</strong> <span class="mono">${esc(addr)}</span></div>
+          <div class="muted">nonce ${hexToInt(nonce)} · balance ${esc(bal)} · code ${((code.length - 2) / 2) | 0} bytes</div>
+          <p class="muted">Source of truth is a YAML or WAT/WASM file (`ivory-dev deploy`). This page only reads.</p>
+          <div>Bytecode<pre>${esc(shown)}</pre></div>
+          <form id="slot-form" class="row">
+            <label>Storage slot
+              <input id="slot" spellcheck="false" placeholder="0x0">
+            </label>
+            <button type="submit">Read slot</button>
+          </form>
+          <pre id="slot-out" hidden></pre>
+        </div>`;
+      $("slot-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const slot = $("slot").value.trim() || "0x0";
+        const out = $("slot-out");
+        try {
+          const v = await rpc("eth_getStorageAt", [addr, slot, "latest"]);
+          out.hidden = false;
+          out.textContent = v;
+        } catch (err) {
+          out.hidden = false;
+          out.textContent = String(err.message || err);
+        }
+      });
+    }
+
+    async function refresh() {
+      $("lag").textContent = "";
+      try {
+        const info = await rpc("ivory_nodeInfo");
+        $("stats").innerHTML = [
+          `<div class="stat"><dt>Role</dt><dd><span class="badge">${esc(info.role)}</span></dd></div>`,
+          stat("Chain id", hexToInt(info.chainId)),
+          stat("Head", hexToInt(info.headNumber)),
+          stat("Pending", info.pending),
+          stat("Peers", info.peers),
+          stat("Address", short(info.address, 6)),
+          stat("Peer id", short(info.peerId, 8) || "—"),
+          stat("Head hash", short(info.headHash, 8) || "—"),
+        ].join("");
+
+        const compare = $("compare").value.trim();
+        if (compare) {
+          try {
+            const other = await rpc("ivory_nodeInfo", [], compare.replace(/\/$/, ""));
+            const lag = hexToInt(info.headNumber) - hexToInt(other.headNumber);
+            $("lag").textContent =
+              `Compare ${other.role} head ${hexToInt(other.headNumber)} · lag ${lag}`;
+          } catch (err) {
+            $("lag").innerHTML = `<span class="err">Compare failed: ${esc(err.message || err)}</span>`;
+          }
+        }
+
+        const head = hexToInt(info.headNumber);
+        const start = Math.max(0, head - 11);
+        const rows = [];
+        for (let n = head; n >= start; n--) {
+          const b = await rpc("eth_getBlockByNumber", ["0x" + n.toString(16)]);
+          rows.push(`<tr>
+            <td><span class="link" data-block="${n}">${n}</span></td>
+            <td class="mono">${esc(short(b.hash, 8))}</td>
+            <td>${(b.transactions || []).length}</td>
+            <td class="mono">${esc(short(b.miner, 4))}</td>
+          </tr>`);
+        }
+        $("blocks").innerHTML = `<table>
+          <thead><tr><th>#</th><th>Hash</th><th>Txs</th><th>Miner</th></tr></thead>
+          <tbody>${rows.join("")}</tbody></table>`;
+        $("blocks").querySelectorAll("[data-block]").forEach((el) => {
+          el.addEventListener("click", () => showBlock(el.dataset.block));
+        });
+
+        const contracts = await rpc("ivory_listContracts");
+        if (!contracts.length) {
+          $("contracts").innerHTML = `<p class="muted">No contracts on the canonical chain. Deploy a YAML/WAT file: <span class="mono">ivory-dev deploy contracts/tracker.yaml</span></p>`;
+        } else {
+          $("contracts").innerHTML = `<table>
+            <thead><tr><th>Name</th><th>Address</th><th>Block</th><th>Code</th></tr></thead>
+            <tbody>${contracts.map((c) => `<tr>
+              <td>${c.registered ? esc(c.name) : `<span class="muted">unregistered</span>`}</td>
+              <td><span class="link mono" data-contract="${esc(c.address)}">${esc(c.address)}</span></td>
+              <td>${hexToInt(c.blockNumber)}</td>
+              <td>${c.codeSize} B</td>
+            </tr>`).join("")}</tbody></table>`;
+          $("contracts").querySelectorAll("[data-contract]").forEach((el) => {
+            el.addEventListener("click", () => showContract(el.dataset.contract));
+          });
+        }
+      } catch (err) {
+        $("stats").innerHTML = `<p class="err">${esc(err.message || err)}</p>`;
+        $("blocks").innerHTML = "";
+        $("contracts").innerHTML = "";
+      }
+    }
+
+    $("rpc").value = location.origin;
+    $("refresh").addEventListener("click", refresh);
+    loadTheme();
+    refresh();
+    setInterval(refresh, 4000);
+  </script>
+</body>
+</html>

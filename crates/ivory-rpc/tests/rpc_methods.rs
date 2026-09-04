@@ -7,7 +7,7 @@ use ivory_consensus::{ConsensusEngine, PoAConsensus};
 use ivory_core::{Account, Block, BlockHeader, QuantEnvelope, QuantMetric};
 use ivory_crypto::{keypair_from_byte, signed_transfer, signed_tx};
 use ivory_primitives::{Address, Bytes, H256, U256};
-use ivory_rpc::{RpcContext, RpcError, RpcHandler};
+use ivory_rpc::{NodeRole, RpcContext, RpcError, RpcHandler};
 use ivory_state::StateDB;
 use ivory_txpool::TransactionPool;
 use serde_json::json;
@@ -530,6 +530,192 @@ fn send_raw_quant_envelope_roundtrip() {
     let decoded = QuantEnvelope::decode(&bytes).unwrap();
     assert_eq!(decoded.decision_id, "d-1");
     assert_eq!(decoded.schema, "app.v1");
+}
+
+#[test]
+fn node_info_defaults_to_follower() {
+    let (h, store, _, _) = handler_with_genesis();
+    let genesis = store.head_block().unwrap();
+    let info = h.handle("ivory_nodeInfo", json!([])).unwrap();
+    assert_eq!(info["role"], json!("follower"));
+    assert_eq!(info["chainId"], json!("0x1"));
+    assert_eq!(info["pending"], json!(0));
+    assert_eq!(info["peers"], json!(0));
+    assert_eq!(info["headNumber"], json!("0x0"));
+    assert_eq!(info["headHash"], json!(genesis.hash().to_hex()));
+    assert_eq!(info["bootstrap"], json!([]));
+}
+
+#[test]
+fn node_info_pending_and_producer_role() {
+    use std::sync::atomic::AtomicUsize;
+
+    let store = Arc::new(BlockStore::new(poa()));
+    store.insert_genesis(genesis()).unwrap();
+    let pool = Arc::new(TransactionPool::new());
+    let addr = miner();
+    let h = RpcHandler::new(
+        RpcContext::new(Arc::clone(&store), Arc::clone(&pool), StateDB::new(), 7).with_node_info(
+            NodeRole::Producer,
+            addr,
+            "peer-test".into(),
+            Arc::new(AtomicUsize::new(2)),
+            vec!["/ip4/127.0.0.1/tcp/9000".into()],
+        ),
+    );
+    let tx = signed_transfer(
+        &keypair_from_byte(1).0,
+        keypair_from_byte(2).2,
+        0,
+        U256::from(1u64),
+        21_000,
+    );
+    let raw = format!("0x{}", hex::encode(bincode::serialize(&tx).unwrap()));
+    h.handle("eth_sendRawTransaction", json!([raw])).unwrap();
+    let info = h.handle("ivory_nodeInfo", json!([])).unwrap();
+    assert_eq!(info["role"], json!("producer"));
+    assert_eq!(info["address"], json!(addr.to_hex()));
+    assert_eq!(info["chainId"], json!("0x7"));
+    assert_eq!(info["peerId"], json!("peer-test"));
+    assert_eq!(info["peers"], json!(2));
+    assert_eq!(info["pending"], json!(1));
+    assert_eq!(info["bootstrap"], json!(["/ip4/127.0.0.1/tcp/9000"]));
+}
+
+#[test]
+fn list_contracts_empty_without_creates() {
+    let (h, _, _, _) = handler_with_genesis();
+    assert_eq!(
+        h.handle("ivory_listContracts", json!([])).unwrap(),
+        json!([])
+    );
+}
+
+#[test]
+fn list_contracts_after_create() {
+    let (h, store, state, _) = handler_with_genesis();
+    let code = Bytes::from_vec(vec![0xaa, 0xbb, 0xcc]);
+    let tx = signed_tx(
+        &keypair_from_byte(1).0,
+        None,
+        0,
+        U256::ZERO,
+        100_000,
+        U256::ONE,
+        code.clone(),
+    );
+    let hash = tx.hash();
+    let addr = Address::create(&tx.from, tx.nonce);
+    state.set_code(addr, code);
+    let parent = store.head_block().unwrap();
+    let mut header = BlockHeader {
+        number: 1,
+        parent_hash: parent.hash(),
+        timestamp: 2,
+        miner: miner(),
+        gas_limit: 30_000_000,
+        gas_used: 50_000,
+        state_root: H256::ZERO,
+        transactions_root: H256::ZERO,
+        receipts_root: H256::ZERO,
+        difficulty: U256::ZERO,
+        extra_data: Bytes::new(),
+    };
+    poa()
+        .seal_header(&mut header, &miner(), &miner_sk())
+        .unwrap();
+    store
+        .insert_block(Block {
+            header,
+            transactions: vec![tx],
+            receipts: vec![ivory_core::Receipt {
+                tx_hash: hash,
+                block_number: 1,
+                gas_used: 50_000,
+                status: true,
+                logs: Vec::new(),
+            }],
+        })
+        .unwrap();
+    let list = h.handle("ivory_listContracts", json!([])).unwrap();
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list[0]["address"], json!(addr.to_hex()));
+    assert_eq!(list[0]["codeSize"], json!(3));
+    assert_eq!(list[0]["blockNumber"], json!("0x1"));
+    assert_eq!(list[0]["transactionHash"], json!(hash.to_hex()));
+    assert_eq!(list[0]["registered"], json!(false));
+}
+
+#[test]
+fn list_contracts_matches_file_catalog() {
+    use ivory_primitives::keccak256;
+    use ivory_rpc::ContractMeta;
+
+    let (_old, store, state, _) = handler_with_genesis();
+    let code = Bytes::from_vec(vec![0x11, 0x22]);
+    let hash_code = keccak256(code.as_slice());
+    let tx = signed_tx(
+        &keypair_from_byte(1).0,
+        None,
+        0,
+        U256::ZERO,
+        100_000,
+        U256::ONE,
+        code.clone(),
+    );
+    let tx_hash = tx.hash();
+    let addr = Address::create(&tx.from, tx.nonce);
+    state.set_code(addr, code);
+    let parent = store.head_block().unwrap();
+    let mut header = BlockHeader {
+        number: 1,
+        parent_hash: parent.hash(),
+        timestamp: 2,
+        miner: miner(),
+        gas_limit: 30_000_000,
+        gas_used: 50_000,
+        state_root: H256::ZERO,
+        transactions_root: H256::ZERO,
+        receipts_root: H256::ZERO,
+        difficulty: U256::ZERO,
+        extra_data: Bytes::new(),
+    };
+    poa()
+        .seal_header(&mut header, &miner(), &miner_sk())
+        .unwrap();
+    store
+        .insert_block(Block {
+            header,
+            transactions: vec![tx],
+            receipts: vec![ivory_core::Receipt {
+                tx_hash,
+                block_number: 1,
+                gas_used: 50_000,
+                status: true,
+                logs: Vec::new(),
+            }],
+        })
+        .unwrap();
+    let h = RpcHandler::new(
+        RpcContext::new(store, Arc::new(TransactionPool::new()), state, 1).with_contract_lookup(
+            move |h| {
+                if *h == hash_code {
+                    Some(ContractMeta {
+                        name: "tracker".into(),
+                        schema: "app.v1".into(),
+                        source: "contracts/tracker.yaml".into(),
+                        description: "marker".into(),
+                    })
+                } else {
+                    None
+                }
+            },
+        ),
+    );
+    let list = h.handle("ivory_listContracts", json!([])).unwrap();
+    assert_eq!(list[0]["name"], json!("tracker"));
+    assert_eq!(list[0]["schema"], json!("app.v1"));
+    assert_eq!(list[0]["registered"], json!(true));
 }
 
 #[test]

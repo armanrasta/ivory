@@ -1,7 +1,9 @@
 //! JSON-RPC method dispatch.
 
+use std::sync::atomic::Ordering;
+
 use ivory_core::{Block, Transaction};
-use ivory_primitives::{Address, H256, U256};
+use ivory_primitives::{Address, H256, U256, keccak256};
 use ivory_txpool::TxOrigin;
 use serde_json::{Value, json};
 
@@ -46,6 +48,8 @@ impl RpcHandler {
             "eth_getTransactionReceipt" => self.get_transaction_receipt(params),
             "eth_getTransactionCount" => self.get_transaction_count(params),
             "eth_sendRawTransaction" => self.send_raw_transaction(params),
+            "ivory_nodeInfo" => self.node_info(),
+            "ivory_listContracts" => self.list_contracts(),
             other => Err(RpcError::MethodNotFound(other.to_string())),
         }
     }
@@ -186,6 +190,63 @@ impl RpcHandler {
             cb(admitted);
         }
         Ok(Value::String(hash.to_hex()))
+    }
+
+    fn node_info(&self) -> Result<Value, RpcError> {
+        let (head_number, head_hash) = match self.ctx.store.head_block() {
+            Some(block) => (
+                encode_qty(block.header.number),
+                Value::String(block.hash().to_hex()),
+            ),
+            None => ("0x0".into(), Value::Null),
+        };
+        Ok(json!({
+            "role": self.ctx.role.as_str(),
+            "address": self.ctx.address.to_hex(),
+            "chainId": encode_qty(self.ctx.chain_id),
+            "peerId": self.ctx.peer_id,
+            "peers": self.ctx.peers.load(Ordering::Relaxed),
+            "pending": self.ctx.pool.pending_count(),
+            "headNumber": head_number,
+            "headHash": head_hash,
+            "bootstrap": self.ctx.bootstrap,
+        }))
+    }
+
+    fn list_contracts(&self) -> Result<Value, RpcError> {
+        let Some(head) = self.ctx.store.head_block() else {
+            return Ok(json!([]));
+        };
+        let mut out = Vec::new();
+        for n in 1..=head.header.number {
+            let Some(block) = self.ctx.store.get_block_by_number(n) else {
+                continue;
+            };
+            for (tx, receipt) in block.transactions.iter().zip(block.receipts.iter()) {
+                if !tx.is_create() || !receipt.status {
+                    continue;
+                }
+                let addr = Address::create(&tx.from, tx.nonce);
+                let code = self.ctx.state.get_code(&addr);
+                let meta = self
+                    .ctx
+                    .contract_lookup
+                    .as_ref()
+                    .and_then(|f| f(&keccak256(&code)));
+                out.push(json!({
+                    "address": addr.to_hex(),
+                    "codeSize": code.len(),
+                    "blockNumber": encode_qty(n),
+                    "transactionHash": tx.hash().to_hex(),
+                    "name": meta.as_ref().map(|m| m.name.clone()),
+                    "schema": meta.as_ref().map(|m| m.schema.clone()),
+                    "source": meta.as_ref().map(|m| m.source.clone()),
+                    "description": meta.as_ref().map(|m| m.description.clone()),
+                    "registered": meta.is_some(),
+                }));
+            }
+        }
+        Ok(Value::Array(out))
     }
 
     fn block_by_tag(&self, tag: BlockNumberOrTag) -> Option<Block> {

@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use axum::extract::ws::WebSocketUpgrade;
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::Value;
 use tower_http::cors::CorsLayer;
@@ -15,6 +15,9 @@ use tower_http::cors::CorsLayer;
 use crate::handler::RpcHandler;
 use crate::jsonrpc::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 use crate::websocket;
+
+/// Read-only explorer (`GET /ui`).
+const PANEL_HTML: &str = include_str!("../../../web/panel.html");
 
 /// Shared server state.
 pub struct RpcState {
@@ -27,8 +30,17 @@ pub fn router(handler: RpcHandler) -> Router {
     let state = Arc::new(RpcState { handler });
     Router::new()
         .route("/", post(http_jsonrpc).get(ws_upgrade))
+        .route("/ui", get(panel_ui))
+        .route("/ui/", get(panel_ui))
         .layer(CorsLayer::permissive())
         .with_state(state)
+}
+
+async fn panel_ui() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        PANEL_HTML,
+    )
 }
 
 /// Bind and serve JSON-RPC.
