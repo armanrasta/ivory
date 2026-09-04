@@ -147,6 +147,8 @@ pub struct DataPaths {
     pub genesis: PathBuf,
     /// `validator.key`.
     pub validator_key: PathBuf,
+    /// RocksDB directory for canonical blocks.
+    pub chain: PathBuf,
 }
 
 impl DataPaths {
@@ -157,6 +159,7 @@ impl DataPaths {
             config: root.join("config.toml"),
             genesis: root.join("genesis.json"),
             validator_key: root.join("validator.key"),
+            chain: root.join("chain"),
             root,
         }
     }
@@ -205,6 +208,8 @@ pub fn init_datadir(root: &Path) -> Result<DataPaths> {
         &paths.config,
         toml::to_string_pretty(&NodeFileConfig::default())?,
     )?;
+    std::fs::create_dir_all(&paths.chain)
+        .with_context(|| format!("mkdir {}", paths.chain.display()))?;
     Ok(paths)
 }
 

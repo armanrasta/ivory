@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use ivory_chain::BlockStore;
 use ivory_consensus::{ConsensusEngine, PoAConsensus};
-use ivory_core::{Account, Block, BlockHeader};
-use ivory_crypto::{keypair_from_byte, signed_transfer};
+use ivory_core::{Account, Block, BlockHeader, QuantEnvelope, QuantMetric};
+use ivory_crypto::{keypair_from_byte, signed_transfer, signed_tx};
 use ivory_primitives::{Address, Bytes, H256, U256};
 use ivory_rpc::{RpcContext, RpcError, RpcHandler};
 use ivory_state::StateDB;
@@ -75,6 +75,17 @@ fn empty_handler() -> RpcHandler {
 fn chain_id() {
     let h = empty_handler();
     assert_eq!(h.handle("eth_chainId", json!([])).unwrap(), json!("0x63"));
+}
+
+#[test]
+fn transaction_count_missing_account_is_zero() {
+    let (h, _, _, _) = handler_with_genesis();
+    let addr = keypair_from_byte(3).2;
+    assert_eq!(
+        h.handle("eth_getTransactionCount", json!([addr.to_hex(), "latest"]))
+            .unwrap(),
+        json!("0x0")
+    );
 }
 
 #[test]
@@ -334,6 +345,36 @@ fn send_raw_and_get_pending_tx() {
 }
 
 #[test]
+fn send_raw_invokes_gossip_hook() {
+    use std::sync::Mutex;
+
+    let store = Arc::new(BlockStore::new(poa()));
+    store.insert_genesis(genesis()).unwrap();
+    let seen = Arc::new(Mutex::new(None));
+    let seen_cb = Arc::clone(&seen);
+    let handler = RpcHandler::new(
+        RpcContext::new(store, Arc::new(TransactionPool::new()), StateDB::new(), 1).with_gossip(
+            move |tx| {
+                *seen_cb.lock().unwrap() = Some(tx.hash());
+            },
+        ),
+    );
+    let tx = signed_transfer(
+        &keypair_from_byte(1).0,
+        keypair_from_byte(2).2,
+        0,
+        U256::from(1u64),
+        21_000,
+    );
+    let hash = tx.hash();
+    let raw = format!("0x{}", hex::encode(bincode::serialize(&tx).unwrap()));
+    handler
+        .handle("eth_sendRawTransaction", json!([raw]))
+        .unwrap();
+    assert_eq!(*seen.lock().unwrap(), Some(hash));
+}
+
+#[test]
 fn send_raw_bad_hex() {
     let (h, _, _, _) = handler_with_genesis();
     assert!(matches!(
@@ -449,6 +490,46 @@ fn get_tx_and_receipt_from_block() {
         .unwrap();
     assert_eq!(rec["status"], json!("0x1"));
     assert_eq!(rec["gasUsed"], json!("0x5208"));
+    assert_eq!(rec["logs"], json!([]));
+    assert!(rec["contractAddress"].is_null());
+}
+
+#[test]
+fn send_raw_quant_envelope_roundtrip() {
+    let (h, _, _, _) = handler_with_genesis();
+    let env = QuantEnvelope {
+        version: ivory_core::QUANT_SCHEMA_VERSION,
+        decision_id: "d-1".into(),
+        schema: "app.v1".into(),
+        metrics: vec![QuantMetric {
+            name: "score".into(),
+            value: "1".into(),
+        }],
+        content_hash: None,
+        cid: None,
+    };
+    let data = env.encode();
+    let gas = 21_000u64.saturating_add(16 * data.as_slice().len() as u64);
+    let tx = signed_tx(
+        &keypair_from_byte(1).0,
+        Some(keypair_from_byte(2).2),
+        0,
+        U256::ZERO,
+        gas,
+        U256::ONE,
+        data,
+    );
+    let hash = tx.hash();
+    let raw = format!("0x{}", hex::encode(bincode::serialize(&tx).unwrap()));
+    h.handle("eth_sendRawTransaction", json!([raw])).unwrap();
+    let got = h
+        .handle("eth_getTransactionByHash", json!([hash.to_hex()]))
+        .unwrap();
+    let input = got["input"].as_str().unwrap();
+    let bytes = hex::decode(input.trim_start_matches("0x")).unwrap();
+    let decoded = QuantEnvelope::decode(&bytes).unwrap();
+    assert_eq!(decoded.decision_id, "d-1");
+    assert_eq!(decoded.schema, "app.v1");
 }
 
 #[test]

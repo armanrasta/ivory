@@ -36,11 +36,12 @@ async fn main() -> Result<()> {
             println!("  config:        {}", paths.config.display());
             println!("  genesis:       {}", paths.genesis.display());
             println!("  validator key: {}", paths.validator_key.display());
+            println!("  chain db:      {}", paths.chain.display());
         }
         Commands::Run => {
-            let (cfg, genesis, key, _) = load_datadir(&cli.data_dir)?;
+            let (cfg, genesis, key, paths) = load_datadir(&cli.data_dir)?;
             let (shutdown_tx, shutdown_rx) = watch::channel(false);
-            let _node = run_node(cfg, genesis, key, shutdown_rx).await?;
+            let _node = run_node(cfg, genesis, key, shutdown_rx, &paths).await?;
             tracing::info!("Ivory node running");
             tokio::signal::ctrl_c().await?;
             let _ = shutdown_tx.send(true);

@@ -102,7 +102,7 @@ jobs:
             extra: ""
           - block: node
             packages: -p ivory
-            extra: ""
+            extra: "-- --test-threads=1"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

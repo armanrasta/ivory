@@ -11,14 +11,19 @@ use ivory_consensus::{ConsensusEngine, PoAConsensus};
 use ivory_core::{Account, Block, BlockHeader};
 use ivory_crypto::address_from_secret;
 use ivory_executor::{ExecutionContext, Executor};
-use ivory_network::{NetworkConfig, NetworkEvent, NetworkHandle, start as start_network};
+use ivory_network::{
+    Multiaddr, NetworkConfig, NetworkEvent, NetworkHandle, start as start_network,
+};
 use ivory_primitives::{Address, Bytes, H256, SecretKey, U256};
-use ivory_rpc::{RpcContext, RpcHandler, serve};
+use ivory_rpc::{RpcContext, RpcHandler, router};
 use ivory_state::StateDB;
 use ivory_txpool::{TransactionPool, TxOrigin};
-use tokio::sync::watch;
+use tokio::net::TcpListener;
+use tokio::sync::{oneshot, watch};
+use tokio::task::JoinHandle;
 
-use crate::config::{GenesisFile, NodeFileConfig};
+use crate::config::{DataPaths, GenesisFile, NodeFileConfig};
+use crate::persist::ChainPersist;
 
 /// Running node handles.
 pub struct Node {
@@ -30,18 +35,36 @@ pub struct Node {
     pub store: Arc<BlockStore>,
     /// P2P handle.
     pub network: NetworkHandle,
+    /// Bound JSON-RPC address (port may be ephemeral).
+    pub rpc_addr: SocketAddr,
+    /// Bound libp2p listen multiaddr.
+    pub p2p_addr: Multiaddr,
+    tasks: Vec<JoinHandle<()>>,
+}
+
+impl Drop for Node {
+    fn drop(&mut self) {
+        for task in self.tasks.drain(..) {
+            task.abort();
+        }
+    }
 }
 
 /// Start networking, RPC, import loop, and optional block production.
 ///
+/// Canonical blocks are persisted under [`DataPaths::chain`] and replayed on
+/// restart. Fork/reorg updates the in-memory canonical head but does **not**
+/// roll back [`Executor`] state (follow-up, not this slice).
+///
 /// # Errors
 ///
-/// Bind, genesis, or network failures.
+/// Bind, genesis, persistence, or network failures.
 pub async fn run_node(
     cfg: NodeFileConfig,
     genesis: GenesisFile,
     validator_key: SecretKey,
     mut shutdown: watch::Receiver<bool>,
+    paths: &DataPaths,
 ) -> Result<Node> {
     let poa = PoAConsensus::new(genesis.poa_config()?)?;
     let local_addr = address_from_secret(&validator_key);
@@ -56,13 +79,33 @@ pub async fn run_node(
         state.set_account(addr, acc);
     }
 
+    let persist = Arc::new(ChainPersist::open(&paths.chain)?);
     let store = Arc::new(BlockStore::new(poa.clone()));
     let genesis_block = genesis_block(&genesis)?;
-    store.insert_genesis(genesis_block)?;
+    let loaded_height = persist.load_into(&store, &genesis_block)?;
+    if loaded_height.is_none() {
+        store.insert_genesis(genesis_block.clone())?;
+        persist.persist_canonical(&store, &genesis_block)?;
+    }
     store.record_state(0, state.clone());
 
     let pool = Arc::new(TransactionPool::new());
     let executor = Arc::new(Executor::new(state.clone()));
+    if let Some(head_n) = loaded_height {
+        for n in 1..=head_n {
+            let block = store
+                .get_block_by_number(n)
+                .with_context(|| format!("replay: missing block {n}"))?;
+            let mut ctx = ExecutionContext::new(block.header.number, block.header.timestamp);
+            for tx in &block.transactions {
+                executor
+                    .execute_transaction(tx, &mut ctx)
+                    .with_context(|| format!("replay tx in block {n}"))?;
+            }
+            store.record_state(n, executor.state().clone());
+        }
+    }
+
     let producer = BlockProducer::with_gas_limit(genesis.gas_limit);
 
     let net_cfg = NetworkConfig {
@@ -75,64 +118,94 @@ pub async fn run_node(
     };
     let (network, mut events) = start_network(net_cfg).await?;
 
-    let handler = RpcHandler::new(RpcContext::new(
-        Arc::clone(&store),
-        Arc::clone(&pool),
-        state,
-        cfg.chain_id,
-    ));
+    let gossip_net = network.clone();
+    let handler = RpcHandler::new(
+        RpcContext::new(Arc::clone(&store), Arc::clone(&pool), state, cfg.chain_id).with_gossip(
+            move |tx| {
+                let _ = gossip_net.broadcast_transaction(tx);
+            },
+        ),
+    );
 
-    let rpc_addr: SocketAddr = cfg.rpc_addr.parse().context("rpc addr")?;
+    let rpc_bind: SocketAddr = cfg.rpc_addr.parse().context("rpc addr")?;
+    let listener = TcpListener::bind(rpc_bind).await.context("bind rpc")?;
+    let rpc_addr = listener.local_addr().context("rpc local addr")?;
     let rpc_handler = handler.clone();
     let mut shutdown_rpc = shutdown.clone();
-    tokio::spawn(async move {
+    let rpc_task = tokio::spawn(async move {
         tokio::select! {
-            _ = serve(rpc_handler, rpc_addr) => {}
+            _ = axum::serve(listener, router(rpc_handler)) => {}
             _ = shutdown_rpc.changed() => {}
         }
     });
 
+    let (listen_tx, listen_rx) = oneshot::channel();
     let orphans: Arc<Mutex<HashMap<H256, Block>>> = Arc::new(Mutex::new(HashMap::new()));
     let import_store = Arc::clone(&store);
     let import_pool = Arc::clone(&pool);
     let import_exec = Arc::clone(&executor);
     let import_net = network.clone();
     let import_orphans = Arc::clone(&orphans);
-    tokio::spawn(async move {
-        while let Some(ev) = events.recv().await {
-            match ev {
-                NetworkEvent::TxReceived(tx) => {
-                    let _ = import_pool.add_transaction(tx, TxOrigin::Remote);
-                }
-                NetworkEvent::BlockReceived(block) => {
-                    import_block(
-                        &import_store,
-                        &import_exec,
-                        &import_pool,
-                        &import_net,
-                        &import_orphans,
-                        block,
-                    );
-                }
-                NetworkEvent::BlockRequest(hash) => {
-                    if let Some(block) = import_store.get_block(&hash) {
-                        let _ = import_net.broadcast_block(block);
+    let import_persist = Arc::clone(&persist);
+    let mut shutdown_import = shutdown.clone();
+    let import_task = tokio::spawn(async move {
+        let mut listen_tx = Some(listen_tx);
+        loop {
+            tokio::select! {
+                ev = events.recv() => {
+                    let Some(ev) = ev else {
+                        break;
+                    };
+                    match ev {
+                        NetworkEvent::ListenAddr(addr) => {
+                            if let Some(tx) = listen_tx.take() {
+                                let _ = tx.send(addr);
+                            }
+                        }
+                        NetworkEvent::TxReceived(tx) => {
+                            let _ = import_pool.add_transaction(tx, TxOrigin::Remote);
+                        }
+                        NetworkEvent::BlockReceived(block) => {
+                            import_block(
+                                &import_store,
+                                &import_exec,
+                                &import_pool,
+                                &import_net,
+                                &import_persist,
+                                &import_orphans,
+                                block,
+                            );
+                        }
+                        NetworkEvent::BlockRequest(hash) => {
+                            if let Some(block) = import_store.get_block(&hash) {
+                                let _ = import_net.broadcast_block(block);
+                            }
+                        }
+                        _ => {}
                     }
                 }
-                _ => {}
+                _ = shutdown_import.changed() => break,
             }
         }
     });
+
+    let p2p_addr = tokio::time::timeout(Duration::from_secs(10), listen_rx)
+        .await
+        .context("waiting for p2p listen")?
+        .context("p2p listen oneshot")?;
+
+    let mut tasks = vec![rpc_task, import_task];
 
     if is_producer {
         let prod_store = Arc::clone(&store);
         let prod_pool = Arc::clone(&pool);
         let prod_exec = Arc::clone(&executor);
         let prod_net = network.clone();
+        let prod_persist = Arc::clone(&persist);
         let interval = Duration::from_millis(cfg.block_interval_ms.max(50));
         let key = validator_key;
         let consensus = poa;
-        tokio::spawn(async move {
+        let prod_task = tokio::spawn(async move {
             let mut tick = tokio::time::interval(interval);
             loop {
                 tokio::select! {
@@ -163,6 +236,10 @@ pub async fn run_node(
                                         block.header.number,
                                         prod_exec.state().clone(),
                                     );
+                                    if let Err(e) = prod_persist.persist_canonical(&prod_store, &block)
+                                    {
+                                        tracing::warn!(error = %e, "persist produced block");
+                                    }
                                     let _ = prod_net.broadcast_block(block);
                                 }
                             }
@@ -173,6 +250,7 @@ pub async fn run_node(
                 }
             }
         });
+        tasks.push(prod_task);
     }
 
     Ok(Node {
@@ -180,6 +258,9 @@ pub async fn run_node(
         pool,
         store,
         network,
+        rpc_addr,
+        p2p_addr,
+        tasks,
     })
 }
 
@@ -219,17 +300,22 @@ fn import_block(
     executor: &Executor,
     pool: &TransactionPool,
     network: &NetworkHandle,
+    persist: &ChainPersist,
     orphans: &Mutex<HashMap<H256, Block>>,
     block: Block,
 ) {
     match store.insert_block(block.clone()) {
         Ok(_) => {
+            // Execute onto live state. Reorgs do not roll this back.
             let mut ctx = ExecutionContext::new(block.header.number, block.header.timestamp);
             for tx in &block.transactions {
                 let _ = executor.execute_transaction(tx, &mut ctx);
                 pool.remove(&tx.hash());
             }
             store.record_state(block.header.number, executor.state().clone());
+            if let Err(e) = persist.persist_canonical(store, &block) {
+                tracing::warn!(error = %e, "persist imported block");
+            }
             let hash = block.hash();
             let mut pending = orphans.lock().unwrap();
             let children: Vec<Block> = pending
@@ -240,7 +326,7 @@ fn import_block(
             for child in children {
                 pending.remove(&child.hash());
                 drop(pending);
-                import_block(store, executor, pool, network, orphans, child);
+                import_block(store, executor, pool, network, persist, orphans, child);
                 pending = orphans.lock().unwrap();
             }
         }

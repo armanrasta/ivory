@@ -44,6 +44,7 @@ impl RpcHandler {
             "eth_getBlockByHash" => self.get_block_by_hash(params),
             "eth_getTransactionByHash" => self.get_transaction_by_hash(params),
             "eth_getTransactionReceipt" => self.get_transaction_receipt(params),
+            "eth_getTransactionCount" => self.get_transaction_count(params),
             "eth_sendRawTransaction" => self.send_raw_transaction(params),
             other => Err(RpcError::MethodNotFound(other.to_string())),
         }
@@ -86,6 +87,18 @@ impl RpcHandler {
         let slot = parse_h256_at(&params, 1)?;
         let val = self.ctx.state.get_storage(&addr, &slot);
         Ok(Value::String(val.to_hex()))
+    }
+
+    fn get_transaction_count(&self, params: Value) -> Result<Value, RpcError> {
+        let addr = parse_address_at(&params, 0)?;
+        let _tag = parse_block_tag_at(&params, 1).unwrap_or(BlockTag::Latest);
+        let nonce = self
+            .ctx
+            .state
+            .get_account(&addr)
+            .map(|a| a.nonce)
+            .unwrap_or(0);
+        Ok(Value::String(encode_qty(nonce)))
     }
 
     fn get_block_by_number(&self, params: Value) -> Result<Value, RpcError> {
@@ -138,6 +151,11 @@ impl RpcHandler {
             .receipts
             .get(loc.index)
             .ok_or(RpcError::TransactionNotFound)?;
+        let contract_address = if tx.is_create() {
+            Value::String(Address::create(&tx.from, tx.nonce).to_hex())
+        } else {
+            Value::Null
+        };
         Ok(json!({
             "transactionHash": hash.to_hex(),
             "transactionIndex": encode_qty(loc.index as u64),
@@ -148,7 +166,8 @@ impl RpcHandler {
             "gasUsed": encode_qty(receipt.gas_used),
             "cumulativeGasUsed": encode_qty(receipt.gas_used),
             "status": if receipt.status { "0x1" } else { "0x0" },
-            "logs": [],
+            "logs": receipt.logs.iter().map(log_to_json).collect::<Vec<_>>(),
+            "contractAddress": contract_address,
         }))
     }
 
@@ -157,11 +176,15 @@ impl RpcHandler {
         let raw = decode_hex(&hex_str).map_err(RpcError::InvalidParams)?;
         let tx: Transaction =
             bincode::deserialize(&raw).map_err(|e| RpcError::InvalidParams(e.to_string()))?;
+        let admitted = tx.clone();
         let hash = self
             .ctx
             .pool
-            .add_transaction(tx, TxOrigin::Remote)
+            .add_transaction(tx, TxOrigin::Local)
             .map_err(|e| RpcError::InvalidParams(e.to_string()))?;
+        if let Some(cb) = &self.ctx.on_tx {
+            cb(admitted);
+        }
         Ok(Value::String(hash.to_hex()))
     }
 
@@ -221,6 +244,14 @@ fn tx_to_json(
         "gas": encode_qty(tx.gas),
         "gasPrice": tx.gas_price.to_hex(),
         "input": format!("0x{}", hex::encode(tx.data.as_slice())),
+    })
+}
+
+fn log_to_json(log: &ivory_core::Log) -> Value {
+    json!({
+        "address": log.address.to_hex(),
+        "topics": log.topics.iter().map(|t| t.to_hex()).collect::<Vec<_>>(),
+        "data": format!("0x{}", hex::encode(log.data.as_slice())),
     })
 }
 
