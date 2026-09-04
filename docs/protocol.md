@@ -70,8 +70,9 @@ that still commits `0x0` for either root is invalid.
 Import executes each block on a fork of the **parent** snapshot and rejects a
 mismatched `state_root`. If the canonical head moves, live executor/RPC state
 is reset from the new-head snapshot. Dropped-fork transactions return to the
-pool. Persistence still stores canonical blocks only; restart replays genesis
-alloc plus the canonical path.
+pool. Persistence stores canonical headers, optional bodies, and state
+snapshots. Restart applies the head snapshot when present; otherwise it
+replays genesis alloc plus remaining bodies.
 
 ## Light header chain
 
@@ -93,5 +94,6 @@ Non-canonical `BlockStore` snapshots are pruned on head movement.
 
 `config.toml` `archive = true` (default) keeps every body and snapshot.
 `archive = false` plus `archive_keep` drops non-canonical snapshots and
-in-memory bodies below `head - archive_keep + 1`. Disk still stores full
-canonical blocks so restart can replay, then apply the same window.
+bodies (memory and disk) below `head - archive_keep + 1`, except genesis.
+Disk keeps headers (`H` + hash) and state snapshots (`s` + hash) so restart
+reloads the header chain and skips tx replay when a head snapshot is present.

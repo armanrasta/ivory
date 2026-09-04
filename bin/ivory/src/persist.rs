@@ -2,8 +2,9 @@
 
 use anyhow::{Context, Result, bail};
 use ivory_chain::BlockStore;
-use ivory_core::Block;
+use ivory_core::{Block, BlockHeader};
 use ivory_primitives::H256;
+use ivory_state::{StateDB, StateSnapshot};
 use ivory_storage::RocksDbBackend;
 use std::path::Path;
 
@@ -83,12 +84,29 @@ impl ChainPersist {
             .insert_genesis(genesis)
             .context("reload genesis into memory")?;
         for n in 1..=head.header.number {
-            let block = self
-                .get_block_by_height(n)?
-                .with_context(|| format!("canonical block {n} missing"))?;
+            if let Some(block) = self.get_block_by_height(n)? {
+                store
+                    .insert_block(block)
+                    .with_context(|| format!("reload block {n}"))?;
+                continue;
+            }
+            let hash = self
+                .get_height_hash(n)?
+                .with_context(|| format!("canonical height {n} missing"))?;
+            let header = self
+                .get_header(&hash)?
+                .with_context(|| format!("pruned header {n} missing"))?;
             store
-                .insert_block(block)
-                .with_context(|| format!("reload block {n}"))?;
+                .insert_header(header)
+                .with_context(|| format!("reload header {n}"))?;
+        }
+        for n in 0..=head.header.number {
+            let Some(block) = store.get_block_by_number(n) else {
+                continue;
+            };
+            if let Some(snap) = self.get_snapshot(&block.hash())? {
+                store.record_state(block.hash(), snap);
+            }
         }
         Ok(Some(head.header.number))
     }
@@ -114,13 +132,24 @@ impl ChainPersist {
                 self.archive || n == 0 || head.header.number.saturating_sub(n) < self.archive_keep;
             if keep {
                 self.put_block(&b)?;
+            } else {
+                self.put_header(&b.header)?;
+                self.db
+                    .delete(&block_key(&b.hash()))
+                    .context("drop pruned block body")?;
             }
             self.put_height(n, b.hash())?;
         }
-        if let Some(h) = store.head()
-            && let Some(state) = store.state_at(&h)
-        {
-            let _ = self.persist_trie_nodes(&state.trie_nodes());
+        if let Some(head) = store.head_block() {
+            for n in 0..=head.header.number {
+                let Some(b) = store.get_block_by_number(n) else {
+                    continue;
+                };
+                if let Some(state) = store.state_at(&b.hash()) {
+                    self.persist_trie_nodes(&state.trie_nodes())?;
+                    self.persist_snapshot(&b.hash(), &state)?;
+                }
+            }
         }
         self.db.flush().context("flush chain")?;
         Ok(())
@@ -152,6 +181,54 @@ impl ChainPersist {
         key.push(b't');
         key.extend_from_slice(hash.as_bytes());
         self.db.get(&key).context("read trie node")
+    }
+
+    /// Persist a post-state snapshot so pruned bodies can be skipped on reload.
+    ///
+    /// # Errors
+    ///
+    /// Serialization or RocksDB write failures.
+    pub fn persist_snapshot(&self, hash: &H256, state: &StateDB) -> Result<()> {
+        let bytes = bincode::serialize(&state.to_snapshot()).context("encode state snapshot")?;
+        self.db
+            .put(&snapshot_key(hash), &bytes)
+            .context("write state snapshot")?;
+        Ok(())
+    }
+
+    fn get_snapshot(&self, hash: &H256) -> Result<Option<StateDB>> {
+        let Some(raw) = self.db.get(&snapshot_key(hash)).context("read snapshot")? else {
+            return Ok(None);
+        };
+        let snap: StateSnapshot = bincode::deserialize(&raw).context("decode state snapshot")?;
+        Ok(Some(StateDB::from_snapshot(snap)))
+    }
+
+    fn put_header(&self, header: &BlockHeader) -> Result<()> {
+        let bytes = bincode::serialize(header).context("encode header")?;
+        self.db
+            .put(&header_key(&header.hash()), &bytes)
+            .context("write header")?;
+        Ok(())
+    }
+
+    fn get_header(&self, hash: &H256) -> Result<Option<BlockHeader>> {
+        let Some(raw) = self.db.get(&header_key(hash)).context("read header")? else {
+            return Ok(None);
+        };
+        let header = bincode::deserialize(&raw).context("decode header")?;
+        Ok(Some(header))
+    }
+
+    fn get_height_hash(&self, number: u64) -> Result<Option<H256>> {
+        let Some(raw) = self
+            .db
+            .get(&height_key(number))
+            .with_context(|| format!("read height {number}"))?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(H256::from_slice(&raw).context("height hash length")?))
     }
 
     fn put_block(&self, block: &Block) -> Result<()> {
@@ -200,6 +277,20 @@ fn height_key(number: u64) -> Vec<u8> {
 fn block_key(hash: &H256) -> Vec<u8> {
     let mut key = Vec::with_capacity(33);
     key.push(b'b');
+    key.extend_from_slice(hash.as_bytes());
+    key
+}
+
+fn header_key(hash: &H256) -> Vec<u8> {
+    let mut key = Vec::with_capacity(33);
+    key.push(b'H');
+    key.extend_from_slice(hash.as_bytes());
+    key
+}
+
+fn snapshot_key(hash: &H256) -> Vec<u8> {
+    let mut key = Vec::with_capacity(33);
+    key.push(b's');
     key.extend_from_slice(hash.as_bytes());
     key
 }
@@ -467,5 +558,82 @@ mod tests {
         let store2 = BlockStore::new(poa());
         let other = sealed_genesis(99);
         assert!(persist.load_into(&store2, &other).is_err());
+    }
+
+    fn sealed_child(parent: &Block, number: u64, ts: u64) -> Block {
+        let (tx_root, rx_root) = empty_list_roots();
+        let (sk, _, miner) = keypair_from_byte(1);
+        let poa = PoAConsensus::from_secret(&sk).unwrap();
+        let mut header = BlockHeader {
+            number,
+            parent_hash: parent.hash(),
+            timestamp: ts,
+            miner,
+            gas_limit: 30_000_000,
+            gas_used: 0,
+            state_root: H256::ZERO,
+            transactions_root: tx_root,
+            receipts_root: rx_root,
+            difficulty: U256::ZERO,
+            extra_data: Bytes::new(),
+        };
+        poa.seal_header(&mut header, &miner, &sk).unwrap();
+        Block {
+            header,
+            transactions: Vec::new(),
+            receipts: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn persist_drops_old_bodies_when_not_archive() {
+        use ivory_state::StateDB;
+
+        let dir = tempfile::tempdir().unwrap();
+        let persist = ChainPersist::open_with(dir.path(), false, 1).unwrap();
+        let g = sealed_genesis(1);
+        let store = BlockStore::new(poa());
+        store.insert_genesis(g.clone()).unwrap();
+        let b1 = sealed_child(&g, 1, 2);
+        store.insert_block(b1.clone()).unwrap();
+        let b2 = sealed_child(&b1, 2, 3);
+        store.insert_block(b2.clone()).unwrap();
+        let mid = StateDB::new();
+        let mut acc = ivory_core::Account::new();
+        acc.balance = U256::from(4u64);
+        mid.set_account(keypair_from_byte(2).2, acc);
+        store.record_state(b1.hash(), mid.fork());
+        store.record_state(b2.hash(), StateDB::new());
+        persist.persist_canonical(&store, &b2).unwrap();
+
+        assert!(
+            persist.get_block(&b1.hash()).unwrap().is_none(),
+            "height 1 body must be deleted"
+        );
+        assert!(
+            persist.get_header(&b1.hash()).unwrap().is_some(),
+            "header must remain"
+        );
+
+        let store2 = BlockStore::new(poa());
+        persist.load_into(&store2, &g).unwrap();
+        assert_eq!(store2.head_block().unwrap().hash(), b2.hash());
+        assert!(
+            store2
+                .get_block(&b1.hash())
+                .unwrap()
+                .transactions
+                .is_empty()
+        );
+        assert!(store2.state_at(&b2.hash()).is_some());
+        assert_eq!(
+            store2
+                .state_at(&b1.hash())
+                .unwrap()
+                .get_account(&keypair_from_byte(2).2)
+                .unwrap()
+                .balance,
+            U256::from(4u64)
+        );
     }
 }

@@ -110,15 +110,24 @@ pub async fn run_node(
     let genesis_block = genesis_block(&genesis)?;
     let genesis_hash = genesis_block.hash();
     let loaded_height = persist.load_into(&store, &genesis_block)?;
+    let restored_from_snapshot =
+        loaded_height.is_some() && store.head().is_some_and(|h| store.state_at(&h).is_some());
     if loaded_height.is_none() {
         store.insert_genesis(genesis_block.clone())?;
+        store.record_state(genesis_hash, state.fork());
         persist.persist_canonical(&store, &genesis_block)?;
+    } else if restored_from_snapshot {
+        let head = store.head().context("head after snapshot load")?;
+        state.reset_from(&store.state_at(&head).context("head snapshot")?);
+    } else {
+        store.record_state(genesis_hash, state.fork());
     }
-    store.record_state(genesis_hash, state.fork());
 
     let pool = Arc::new(TransactionPool::new());
     let executor = Arc::new(Executor::new(state.clone()));
-    if let Some(head_n) = loaded_height {
+    if let Some(head_n) = loaded_height
+        && !restored_from_snapshot
+    {
         for n in 1..=head_n {
             let block = store
                 .get_block_by_number(n)

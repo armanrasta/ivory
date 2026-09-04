@@ -35,6 +35,6 @@ hears a new header requests the body; it does not insert a header-only stub
 ## Persistence
 
 Canonical blocks stay on RocksDB. Patricia account-trie nodes are also written
-(`t` + node hash) after import/produce. `archive=false` trims **in-memory**
-snapshots to `archive_keep` heights; disk still keeps bodies so `ivory run` can
-replay. Non-canonical `BlockStore` snapshots are pruned on head change.
+(`t` + node hash) after import/produce. `archive=false` deletes old **disk**
+bodies outside `archive_keep` (headers and `s` + hash snapshots remain).
+Non-canonical `BlockStore` snapshots are pruned on head change.

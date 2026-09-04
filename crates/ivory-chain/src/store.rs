@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use ivory_consensus::{ConsensusEngine, PoAConsensus};
-use ivory_core::{Block, Transaction};
+use ivory_core::{Block, BlockHeader, Transaction};
 use ivory_primitives::H256;
 use ivory_state::StateDB;
 use parking_lot::RwLock;
@@ -219,6 +219,35 @@ impl BlockStore {
             .validate_header(&block.header, Some(&parent.header))?;
         block.validate()?;
         self.insert_validated(block)
+    }
+
+    /// Index a header without transaction/receipt bodies (light / pruned disk).
+    ///
+    /// # Errors
+    ///
+    /// Same parent/number/consensus checks as [`Self::insert_block`], but list
+    /// roots are not compared to an empty body.
+    pub fn insert_header(&self, header: BlockHeader) -> Result<InsertOutcome, ChainError> {
+        if header.number == 0 {
+            return Err(ChainError::InvalidGenesis);
+        }
+        let parent = self
+            .get_block(&header.parent_hash)
+            .ok_or(ChainError::UnknownParent)?;
+        let expected = parent.header.number.saturating_add(1);
+        if header.number != expected {
+            return Err(ChainError::InvalidBlockNumber {
+                expected,
+                got: header.number,
+            });
+        }
+        self.consensus
+            .validate_header(&header, Some(&parent.header))?;
+        self.insert_validated(Block {
+            header,
+            transactions: Vec::new(),
+            receipts: Vec::new(),
+        })
     }
 
     fn insert_validated(&self, block: Block) -> Result<InsertOutcome, ChainError> {
@@ -555,6 +584,18 @@ mod tests {
         store.prune_snapshots_keep(1);
         assert!(store.state_at(&h0).is_none());
         assert!(store.state_at(&h2).is_some());
+    }
+
+    #[test]
+    fn insert_header_indexes_without_body() {
+        let store = BlockStore::new(poa());
+        let h0 = store.insert_genesis(genesis()).unwrap().hash;
+        let header = sealed_header(1, h0, 4);
+        let hash = header.hash();
+        store.insert_header(header).unwrap();
+        let got = store.get_block(&hash).unwrap();
+        assert!(got.transactions.is_empty());
+        assert_eq!(store.head(), Some(hash));
     }
 
     #[test]

@@ -114,7 +114,7 @@ Recorded numbers and how to read them: [docs/benchmarks.md](docs/benchmarks.md).
 
 1. **Now** — Durable local/multi-node demo (persist, gossip from RPC, quant envelope, Python client)
 2. **Testnet** — Docker compose + Helm chart (`deploy/chart/ivory`)
-3. **Later** — protocol → coverage → metrics, then light client
+3. **Later** — hosted RPC, Orbis E2E, external audit (see issue tracker)
 
 Details: [issues](https://github.com/armanrasta/ivory/issues) · [docs/overview.md](docs/overview.md) · [docs/architecture.md](docs/architecture.md) · [docs/protocol.md](docs/protocol.md)
 
