@@ -4,10 +4,11 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
 use ivory_chain::BlockStore;
-use ivory_core::Transaction;
+use ivory_core::{Block, Transaction};
 use ivory_primitives::{Address, H256};
 use ivory_state::StateDB;
 use ivory_txpool::TransactionPool;
+use tokio::sync::broadcast;
 
 /// Producer (genesis validator key) or follower (bootstrap peer).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -46,6 +47,52 @@ pub struct ContractMeta {
     pub description: String,
 }
 
+/// Fan-out for WebSocket `eth_subscribe`.
+#[derive(Clone, Debug)]
+pub enum RpcEvent {
+    /// Canonical head moved.
+    NewHead {
+        /// Block number.
+        number: u64,
+        /// Block hash.
+        hash: H256,
+        /// Parent hash.
+        parent_hash: H256,
+        /// Sealer address.
+        miner: Address,
+        /// Header timestamp.
+        timestamp: u64,
+        /// Post-state root.
+        state_root: H256,
+        /// Block gas limit.
+        gas_limit: u64,
+        /// Gas used in the block.
+        gas_used: u64,
+    },
+    /// Transaction admitted to the mempool.
+    NewPendingTx {
+        /// Transaction hash.
+        hash: H256,
+    },
+}
+
+impl RpcEvent {
+    /// Build a `newHeads` payload from a canonical block.
+    #[must_use]
+    pub fn new_head(block: &Block) -> Self {
+        Self::NewHead {
+            number: block.header.number,
+            hash: block.hash(),
+            parent_hash: block.header.parent_hash,
+            miner: block.header.miner,
+            timestamp: block.header.timestamp,
+            state_root: block.header.state_root,
+            gas_limit: block.header.gas_limit,
+            gas_used: block.header.gas_used,
+        }
+    }
+}
+
 /// Live chain, pool, and state for JSON-RPC methods.
 #[derive(Clone)]
 pub struct RpcContext {
@@ -71,6 +118,8 @@ pub struct RpcContext {
     pub bootstrap: Vec<String>,
     /// Resolve `keccak256(code)` to a YAML/WAT package (reloaded by the node).
     pub contract_lookup: Option<ContractLookup>,
+    /// `eth_subscribe` fan-out (`newHeads` / `newPendingTransactions`).
+    pub events: broadcast::Sender<RpcEvent>,
 }
 
 impl RpcContext {
@@ -94,7 +143,19 @@ impl RpcContext {
             peers: Arc::new(AtomicUsize::new(0)),
             bootstrap: Vec::new(),
             contract_lookup: None,
+            events: broadcast::channel(256).0,
         }
+    }
+
+    /// Subscribe to head and pending-tx notifications.
+    #[must_use]
+    pub fn subscribe_events(&self) -> broadcast::Receiver<RpcEvent> {
+        self.events.subscribe()
+    }
+
+    /// Best-effort emit (lagging subscribers are dropped by broadcast).
+    pub fn emit(&self, event: RpcEvent) {
+        let _ = self.events.send(event);
     }
 
     /// Call `f` after [`crate::RpcHandler`] admits a raw transaction.

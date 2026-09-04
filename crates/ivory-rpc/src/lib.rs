@@ -10,7 +10,7 @@ pub mod server;
 pub mod types;
 pub mod websocket;
 
-pub use context::{ContractLookup, ContractMeta, NodeRole, RpcContext};
+pub use context::{ContractLookup, ContractMeta, NodeRole, RpcContext, RpcEvent};
 pub use error::RpcError;
 pub use handler::RpcHandler;
 pub use jsonrpc::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};

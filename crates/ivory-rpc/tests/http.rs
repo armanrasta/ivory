@@ -2,6 +2,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use ivory_chain::BlockStore;
 use ivory_consensus::{ConsensusEngine, PoAConsensus};
@@ -9,7 +10,7 @@ use ivory_core::{Block, BlockHeader};
 use ivory_crypto::keypair_from_byte;
 use ivory_primitives::{Bytes, H256, U256};
 use ivory_rpc::{
-    JsonRpcRequest, JsonRpcResponse, RpcContext, RpcHandler, RpcHttpConfig, router,
+    JsonRpcRequest, JsonRpcResponse, RpcContext, RpcEvent, RpcHandler, RpcHttpConfig, router,
     router_with_config,
 };
 use ivory_state::StateDB;
@@ -123,7 +124,7 @@ async fn http_method_not_found() {
         addr,
         JsonRpcRequest {
             jsonrpc: "2.0".into(),
-            method: "eth_call".into(),
+            method: "eth_foo".into(),
             params: json!([]),
             id: json!(2),
         },
@@ -265,4 +266,143 @@ async fn rpc_token_rejects_post_without_bearer() {
 async fn rpc_token_accepts_post_with_bearer() {
     let (addr, _h) = spawn_token_server("s3cret").await;
     assert_eq!(post_status(addr, Some("s3cret")).await, 200);
+}
+
+async fn spawn_with_handler(handler: RpcHandler) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = router(handler);
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (addr, handle)
+}
+
+#[tokio::test]
+async fn http_subscribe_is_rejected() {
+    let (addr, _h) = spawn_server().await;
+    let resp = post_rpc(
+        addr,
+        JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            method: "eth_subscribe".into(),
+            params: json!(["newHeads"]),
+            id: json!(1),
+        },
+    )
+    .await;
+    assert!(resp.error.is_some());
+    assert!(
+        resp.error
+            .as_ref()
+            .unwrap()
+            .message
+            .to_lowercase()
+            .contains("websocket")
+    );
+}
+
+#[tokio::test]
+async fn ws_subscribe_new_heads_and_unsubscribe() {
+    use futures::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let store = Arc::new(BlockStore::new(
+        PoAConsensus::from_secret(&keypair_from_byte(9).0).unwrap(),
+    ));
+    let genesis = genesis();
+    store.insert_genesis(genesis.clone()).unwrap();
+    let ctx = RpcContext::new(store, Arc::new(TransactionPool::new()), StateDB::new(), 1);
+    let events = ctx.events.clone();
+    let (addr, _h) = spawn_with_handler(RpcHandler::new(ctx)).await;
+    let url = format!("ws://{addr}/");
+    let (mut ws, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+
+    ws.send(Message::Text(
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_subscribe",
+            "params": ["newHeads"]
+        })
+        .to_string(),
+    ))
+    .await
+    .unwrap();
+    let reply = ws.next().await.unwrap().unwrap();
+    let text = reply.into_text().unwrap();
+    let sub: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let sub_id = sub["result"].as_str().unwrap().to_string();
+    assert!(sub_id.starts_with("0x"));
+
+    events.send(RpcEvent::new_head(&genesis)).unwrap();
+    let note = tokio::time::timeout(Duration::from_secs(2), ws.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let note: serde_json::Value = serde_json::from_str(&note.into_text().unwrap()).unwrap();
+    assert_eq!(note["method"], "eth_subscription");
+    assert_eq!(note["params"]["subscription"], sub_id);
+    assert_eq!(note["params"]["result"]["hash"], genesis.hash().to_hex());
+
+    ws.send(Message::Text(
+        json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "eth_unsubscribe",
+            "params": [sub_id]
+        })
+        .to_string(),
+    ))
+    .await
+    .unwrap();
+    let unsub = ws.next().await.unwrap().unwrap();
+    let unsub: serde_json::Value = serde_json::from_str(&unsub.into_text().unwrap()).unwrap();
+    assert_eq!(unsub["result"], true);
+
+    events.send(RpcEvent::new_head(&genesis)).unwrap();
+    let extra = tokio::time::timeout(Duration::from_millis(200), ws.next()).await;
+    assert!(extra.is_err(), "unsubscribed socket must not be notified");
+}
+
+#[tokio::test]
+async fn ws_subscribe_pending_tx() {
+    use futures::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let ctx = RpcContext::new(
+        Arc::new(BlockStore::new(
+            PoAConsensus::from_secret(&keypair_from_byte(9).0).unwrap(),
+        )),
+        Arc::new(TransactionPool::new()),
+        StateDB::new(),
+        1,
+    );
+    let events = ctx.events.clone();
+    let (addr, _h) = spawn_with_handler(RpcHandler::new(ctx)).await;
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+        .await
+        .unwrap();
+    ws.send(Message::Text(
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_subscribe",
+            "params": ["newPendingTransactions"]
+        })
+        .to_string(),
+    ))
+    .await
+    .unwrap();
+    let _ = ws.next().await;
+    let hash = H256::from_bytes([0xab; 32]);
+    events.send(RpcEvent::NewPendingTx { hash }).unwrap();
+    let note = tokio::time::timeout(Duration::from_secs(2), ws.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let note: serde_json::Value = serde_json::from_str(&note.into_text().unwrap()).unwrap();
+    assert_eq!(note["params"]["result"], hash.to_hex());
 }

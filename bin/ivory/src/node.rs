@@ -15,7 +15,7 @@ use ivory_network::{
     Multiaddr, NetworkConfig, NetworkEvent, NetworkHandle, start as start_network,
 };
 use ivory_primitives::{Address, Bytes, H256, SecretKey, U256};
-use ivory_rpc::{NodeRole, RpcContext, RpcHandler, RpcHttpConfig, router_with_config};
+use ivory_rpc::{NodeRole, RpcContext, RpcEvent, RpcHandler, RpcHttpConfig, router_with_config};
 use ivory_state::StateDB;
 use ivory_txpool::{TransactionPool, TxOrigin};
 use tokio::net::TcpListener;
@@ -171,6 +171,7 @@ pub async fn run_node(
     let import_net = network.clone();
     let import_orphans = Arc::clone(&orphans);
     let import_persist = Arc::clone(&persist);
+    let import_events = handler.context().events.clone();
     let mut shutdown_import = shutdown.clone();
     let import_task = tokio::spawn(async move {
         let mut listen_tx = Some(listen_tx);
@@ -187,7 +188,9 @@ pub async fn run_node(
                             }
                         }
                         NetworkEvent::TxReceived(tx) => {
-                            let _ = import_pool.add_transaction(tx, TxOrigin::Remote);
+                            if let Ok(hash) = import_pool.add_transaction(tx, TxOrigin::Remote) {
+                                let _ = import_events.send(RpcEvent::NewPendingTx { hash });
+                            }
                         }
                         NetworkEvent::BlockReceived(block) => {
                             import_block(
@@ -197,6 +200,7 @@ pub async fn run_node(
                                 &import_net,
                                 &import_persist,
                                 &import_orphans,
+                                &import_events,
                                 block,
                             );
                         }
@@ -226,6 +230,7 @@ pub async fn run_node(
         let prod_exec = Arc::clone(&executor);
         let prod_net = network.clone();
         let prod_persist = Arc::clone(&persist);
+        let prod_events = handler.context().events.clone();
         let interval = Duration::from_millis(cfg.block_interval_ms.max(50));
         let key = validator_key;
         let consensus = poa;
@@ -262,7 +267,10 @@ pub async fn run_node(
                                     &prod_pool,
                                     block.clone(),
                                 ) {
-                                    Ok(_) => {
+                                    Ok(outcome) => {
+                                        if outcome.head_changed {
+                                            let _ = prod_events.send(RpcEvent::new_head(&block));
+                                        }
                                         if let Err(e) =
                                             prod_persist.persist_canonical(&prod_store, &block)
                                         {
@@ -325,6 +333,7 @@ fn decode_extra(s: &str) -> Result<Bytes> {
     Ok(Bytes::from_vec(raw))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn import_block(
     store: &BlockStore,
     executor: &Executor,
@@ -332,10 +341,14 @@ fn import_block(
     network: &NetworkHandle,
     persist: &ChainPersist,
     orphans: &Mutex<HashMap<H256, Block>>,
+    events: &tokio::sync::broadcast::Sender<RpcEvent>,
     block: Block,
 ) {
     match import_and_apply(store, executor.state(), pool, block.clone()) {
-        Ok(_) => {
+        Ok(outcome) => {
+            if outcome.head_changed {
+                let _ = events.send(RpcEvent::new_head(&block));
+            }
             if let Err(e) = persist.persist_canonical(store, &block) {
                 tracing::warn!(error = %e, "persist imported block");
             }
@@ -349,7 +362,9 @@ fn import_block(
             for child in children {
                 pending.remove(&child.hash());
                 drop(pending);
-                import_block(store, executor, pool, network, persist, orphans, child);
+                import_block(
+                    store, executor, pool, network, persist, orphans, events, child,
+                );
                 pending = orphans.lock().unwrap();
             }
         }
