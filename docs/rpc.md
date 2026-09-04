@@ -9,6 +9,17 @@ Read-only explorer: `GET /ui` (and `GET /ui/`). Open
 `http://127.0.0.1:8545/ui` on the producer and `http://127.0.0.1:8546/ui` on a
 follower. The page does not submit transactions.
 
+Probes (no JSON-RPC body; stay open when a token is set):
+
+- `GET /livez` — process up
+- `GET /readyz` — RPC bound and genesis/head present
+
+Optional `IVORY_RPC_TOKEN` or `IVORY_RPC_TOKEN_FILE`: `POST /`, WebSocket, and
+`/ui` require `Authorization: Bearer …`.
+
+CORS (`IVORY_CORS`): empty = none (Helm default); `*` = permissive (Compose);
+otherwise a comma-separated origin allowlist.
+
 ## Methods
 
 | Method | Notes |

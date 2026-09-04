@@ -36,6 +36,10 @@ cargo run -p ivory -- run --data-dir ./slave
 Docker Compose is the local stand-in for a small network (`validator` =
 master, `follower` = slave). Aliases: `NODE_ROLE=master|slave|validator|follower`.
 
+Helm (`deploy/chart/ivory`) is how you run **your** server on a cluster:
+StatefulSets, genesis ConfigMap, optional `validator.key` / RPC token Secrets,
+Ingress TLS, NetworkPolicy. See [deploy.md](deploy.md).
+
 Hosted “our chain”: set `IVORY_PUBLIC_RPC` (JSON-RPC) and
 `IVORY_PUBLIC_BOOTSTRAP` (libp2p) when that network exists. Nothing is
 hard-coded; unset means there is no public endpoint yet.

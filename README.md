@@ -94,7 +94,7 @@ crates/
 bin/ivory/            Server CLI (`init` / `run`)
 tools/ivory-dev/      Project toolchain (`new` / `deploy` / `status`)
 sdk/python/           App client (`ivory-client`)
-deploy/               Docker entrypoint
+deploy/               Docker entrypoint + Helm chart (`chart/ivory`)
 docs/                 Architecture, products, RPC, protocol, envelope, deploy
 ```
 
@@ -112,7 +112,7 @@ Recorded numbers and how to read them: [docs/benchmarks.md](docs/benchmarks.md).
 ## Roadmap (high level)
 
 1. **Now** — Durable local/multi-node demo (persist, gossip from RPC, quant envelope, Python client)
-2. **Testnet** — Docker compose (#17)
+2. **Testnet** — Docker compose + Helm chart (`deploy/chart/ivory`)
 3. **Later** — coverage/metrics, light client
 
 Details: [issues](https://github.com/armanrasta/ivory/issues) · [docs/overview.md](docs/overview.md) · [docs/architecture.md](docs/architecture.md) · [docs/protocol.md](docs/protocol.md)

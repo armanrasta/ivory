@@ -31,6 +31,7 @@ in-memory `BlockStore` and executor, then serves JSON-RPC and libp2p.
 - After `eth_sendRawTransaction` admits a tx, the node gossips it.
 - New blocks are written to RocksDB. Restart reloads them.
 - `GET /ui` serves the read-only ledger explorer (blocks, file-backed contracts, producer vs follower stats).
+- `GET /livez` / `GET /readyz` are kubelet probes. Optional `IVORY_RPC_TOKEN` gates `POST /` and `/ui`.
 - `ivory-dev deploy` compiles a contract file and CREATE-submits it onto a server.
 
 ## Sync

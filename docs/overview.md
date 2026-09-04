@@ -42,7 +42,7 @@ Header hashing is **bincode + keccak256**. Wire encoding stays bincode (not RLP)
 
 ## What is next
 
-See [issue #24](https://github.com/armanrasta/ivory/issues/24): coverage/metrics, light client. Testnet compose is in-tree (`docker-compose.yml`). Re-init existing data dirs after the state-root seal change.
+See [issue #24](https://github.com/armanrasta/ivory/issues/24): coverage/metrics, light client. Testnet compose and the Helm chart are in-tree (`docker-compose.yml`, `deploy/chart/ivory`). Re-init existing data dirs after the state-root seal change.
 
 ## Crate dependency sketch
 
