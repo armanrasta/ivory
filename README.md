@@ -20,13 +20,13 @@ Ivory timestamps records and tracks chain data. It is not a mining or gold-diggi
 | Primitives | `ivory-primitives` | Done — `H256`, `Address`, `U256`, `Bytes`, `Signature` |
 | Crypto | `ivory-crypto` | Done — Ed25519, address = keccak256(pubkey)[12:] |
 | Accounts / blocks / txs | `ivory-core` | Done — keccak hashes, quant envelope |
-| State | `ivory-state` | Done — in-memory `StateDB` (trie later) |
+| State | `ivory-state` | Done — in-memory `StateDB`, keccak Patricia `root_hash` |
 | Storage | `ivory-storage` | Done — RocksDB get/put/delete/flush |
 | Tx pool | `ivory-txpool` | Done — signature check, strict contiguous nonces |
 | Executor | `ivory-executor` | Done — transfers, CREATE, gas, WASM |
 | VM | `ivory-vm` | Done — wasmi fuel, storage, `emit_log` |
 | Consensus | `ivory-consensus` | Done — PoA validator set, Ed25519 seals in `extra_data` |
-| Chain | `ivory-chain` | Done — in-memory store, reorgs, block production |
+| Chain | `ivory-chain` | Done — store, production, reorgs that reset live state |
 | P2P | `ivory-network` | Done — gossipsub blocks/txs + sync `GetBlock` |
 | RPC | `ivory-rpc` | Done — `eth_*` + `ivory_nodeInfo` / `ivory_listContracts`; `GET /ui` |
 | Server | `bin/ivory` | Done — persist, master/slave `role`, `init` / `run` |
@@ -73,7 +73,7 @@ cargo run -p ivory -- init
 cargo run -p ivory -- run
 ```
 
-`eth_sendRawTransaction` takes hex-encoded **bincode** of `Transaction` (keccak256 domain; see [docs/protocol.md](docs/protocol.md)). **Server** (`ivory init` / `run`), **dev** (`ivory-dev new` / `deploy`), **client** (`sdk/python`): [docs/products.md](docs/products.md). State roots stay `0x0` until the Merkle trie (#22). Two-node compose: [docs/deploy.md](docs/deploy.md). Explorer: `/ui`.
+`eth_sendRawTransaction` takes hex-encoded **bincode** of `Transaction` (keccak256 domain; see [docs/protocol.md](docs/protocol.md)). **Server** (`ivory init` / `run`), **dev** (`ivory-dev new` / `deploy`), **client** (`sdk/python`): [docs/products.md](docs/products.md). Headers commit a keccak Patricia state root; re-init existing data dirs. Two-node compose: [docs/deploy.md](docs/deploy.md). Explorer: `/ui`.
 
 ## Workspace layout
 
@@ -113,7 +113,7 @@ Recorded numbers and how to read them: [docs/benchmarks.md](docs/benchmarks.md).
 
 1. **Now** — Durable local/multi-node demo (persist, gossip from RPC, quant envelope, Python client)
 2. **Testnet** — Docker compose (#17)
-3. **Later** — Merkle trie (#22), coverage/metrics, light client
+3. **Later** — coverage/metrics, light client
 
 Details: [issues](https://github.com/armanrasta/ivory/issues) · [docs/overview.md](docs/overview.md) · [docs/architecture.md](docs/architecture.md) · [docs/protocol.md](docs/protocol.md)
 

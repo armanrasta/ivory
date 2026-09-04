@@ -41,10 +41,22 @@ Receipts include `logs`. Out-of-fuel traps.
 
 ## State root
 
-`StateDB::root_hash()` is still `0x0` until the Merkle-Patricia trie (#22). That
-is documented, not a blocker for testnet.
+`StateDB::root_hash()` is a keccak hexary Patricia trie over accounts
+(`keccak256(bincode(node))`, not RLP). Account leaves are `bincode(Account)`;
+each contract’s `storage_root` is a Patricia trie of non-zero slots
+(32-byte key, 32-byte `U256`). An empty account trie has a documented
+non-zero `empty_root`. Empty contract storage stays `0x0` so `Account::is_empty`
+still holds.
+
+Genesis headers seal the alloc root. Existing data dirs must be
+re-initialized (`ivory init`) after this change.
+
+`transactions_root` and `receipts_root` stay `0x0`.
 
 ## Forks
 
-The node’s executor state does **not** roll back on reorg. Persistence stores
-canonical blocks; replay on start rebuilds state from genesis alloc + txs.
+Import executes each block on a fork of the **parent** snapshot and rejects a
+mismatched `state_root`. If the canonical head moves, live executor/RPC state
+is reset from the new-head snapshot. Dropped-fork transactions return to the
+pool. Persistence still stores canonical blocks only; restart replays genesis
+alloc plus the canonical path.

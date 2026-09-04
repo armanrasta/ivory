@@ -21,13 +21,13 @@ mining or speculative “gold digging” network.
 - **Primitives** — hashes, addresses, `U256`, bytes, Ed25519-shaped signature types
 - **Crypto** — `sign` / `verify`, address = last 20 bytes of `keccak256(ed25519_pubkey)`
 - **Core** — `Account`, `BlockHeader`, `Transaction`, `Receipt`, `Log`, `QuantEnvelope`; hashes are `keccak256(bincode(...))`; `signing_hash` omits signature and public key
-- **State** — `StateDB` over `HashMap` (no real state root yet; `0x0` until #22)
+- **State** — `StateDB` over `HashMap` plus a keccak Patricia `root_hash` (account + storage tries)
 - **Storage** — `RocksDbBackend` KV API; node persists canonical blocks under `--data-dir/chain`
 - **Tx pool** — Ed25519 verify on admit, strict contiguous nonces (`ivory-txpool`)
 - **Executor** — transfers, CREATE, intrinsic gas, refunds; WASM via `ivory-vm` when the recipient has code
 - **VM** — wasmi with fuel, `env.storage_get` / `env.storage_set` / `env.emit_log`
 - **Consensus** — PoA validator set; each seal is an Ed25519 signature over the header hash with empty `extra_data`
-- **Chain** — in-memory `BlockStore`, longest-chain reorgs, `BlockProducer` (`ivory-chain`)
+- **Chain** — in-memory `BlockStore`, longest-chain reorgs that roll live state back, `BlockProducer` (`ivory-chain`)
 - **Network** — gossipsub topics `ivory/blocks/1`, `ivory/txs/1`; `ivory/sync/1` for `GetBlock`
 - **RPC** — `eth_*` subset over HTTP plus `ivory_nodeInfo` / `ivory_listContracts`; `GET /ui` explorer. `eth_sendRawTransaction` gossips after admit. Unknown methods return JSON-RPC `-32601`
 - **Server** — `ivory init` / `ivory run` with `role` master|slave; restart reloads RocksDB; two-node smoke in `bin/ivory/tests/two_node.rs`
@@ -42,7 +42,7 @@ Header hashing is **bincode + keccak256**. Wire encoding stays bincode (not RLP)
 
 ## What is next
 
-See [issue #24](https://github.com/armanrasta/ivory/issues/24): Merkle trie (#22), coverage/metrics, light client. Testnet compose is in-tree (`docker-compose.yml`).
+See [issue #24](https://github.com/armanrasta/ivory/issues/24): coverage/metrics, light client. Testnet compose is in-tree (`docker-compose.yml`). Re-init existing data dirs after the state-root seal change.
 
 ## Crate dependency sketch
 

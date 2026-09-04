@@ -40,6 +40,8 @@ parents use `ivory/sync/1` (`GetBlock`). There is no headers-first pipeline.
 
 ## Reorgs
 
-Longest-chain (plus hash tie-break) updates the canonical head. Executor state
-is **not** rolled back on fork; treat that as a known limitation until a later
-slice.
+Longest-chain (plus hash tie-break) updates the canonical head. Live executor
+and RPC state follow the new head: `import_and_apply` verifies `state_root` on
+a parent snapshot, then `reset_from` the winning post-state. Snapshots are
+keyed by **block hash**. Persistence stores blocks only; restart replays the
+canonical path from genesis alloc.
