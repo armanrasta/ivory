@@ -15,7 +15,7 @@ use ivory_network::{
     Multiaddr, NetworkConfig, NetworkEvent, NetworkHandle, start as start_network,
 };
 use ivory_primitives::{Address, Bytes, H256, SecretKey, U256};
-use ivory_rpc::{NodeRole, RpcContext, RpcHandler, router};
+use ivory_rpc::{NodeRole, RpcContext, RpcHandler, RpcHttpConfig, router_with_config};
 use ivory_state::StateDB;
 use ivory_txpool::{TransactionPool, TxOrigin};
 use tokio::net::TcpListener;
@@ -158,7 +158,7 @@ pub async fn run_node(
     let mut shutdown_rpc = shutdown.clone();
     let rpc_task = tokio::spawn(async move {
         tokio::select! {
-            _ = axum::serve(listener, router(rpc_handler)) => {}
+            _ = axum::serve(listener, router_with_config(rpc_handler, RpcHttpConfig::from_env())) => {}
             _ = shutdown_rpc.changed() => {}
         }
     });

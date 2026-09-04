@@ -8,7 +8,10 @@ use ivory_consensus::{ConsensusEngine, PoAConsensus};
 use ivory_core::{Block, BlockHeader};
 use ivory_crypto::keypair_from_byte;
 use ivory_primitives::{Bytes, H256, U256};
-use ivory_rpc::{JsonRpcRequest, JsonRpcResponse, RpcContext, RpcHandler, router};
+use ivory_rpc::{
+    JsonRpcRequest, JsonRpcResponse, RpcContext, RpcHandler, RpcHttpConfig, router,
+    router_with_config,
+};
 use ivory_state::StateDB;
 use ivory_txpool::TransactionPool;
 use serde_json::json;
@@ -146,4 +149,120 @@ async fn http_serves_panel() {
     assert!(text.contains("text/html"));
     assert!(text.contains("ivory-ui-theme"));
     assert!(text.contains("ivory_nodeInfo"));
+}
+
+async fn http_get(addr: SocketAddr, path: &str, auth: Option<&str>) -> (u16, String) {
+    let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let (mut reader, mut writer) = stream.into_split();
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let auth_line = auth
+        .map(|t| format!("Authorization: Bearer {t}\r\n"))
+        .unwrap_or_default();
+    let req =
+        format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{auth_line}Connection: close\r\n\r\n");
+    writer.write_all(req.as_bytes()).await.unwrap();
+    let mut buf = Vec::new();
+    reader.read_to_end(&mut buf).await.unwrap();
+    let text = String::from_utf8_lossy(&buf);
+    let status = text
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    (status, text.into_owned())
+}
+
+#[tokio::test]
+async fn http_livez_readyz() {
+    let (addr, _h) = spawn_server().await;
+    let (status, body) = http_get(addr, "/livez", None).await;
+    assert_eq!(status, 200);
+    assert!(body.contains("ok"));
+    let (status, body) = http_get(addr, "/readyz", None).await;
+    assert_eq!(status, 200);
+    assert!(body.contains("ready"));
+}
+
+async fn spawn_token_server(token: &str) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+    let store = Arc::new(BlockStore::new(
+        PoAConsensus::from_secret(&keypair_from_byte(9).0).unwrap(),
+    ));
+    store.insert_genesis(genesis()).unwrap();
+    let handler = RpcHandler::new(RpcContext::new(
+        store,
+        Arc::new(TransactionPool::new()),
+        StateDB::new(),
+        1,
+    ));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = router_with_config(
+        handler,
+        RpcHttpConfig {
+            token: Some(token.into()),
+            cors: String::new(),
+        },
+    );
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (addr, handle)
+}
+
+#[tokio::test]
+async fn rpc_token_rejects_without_bearer() {
+    let (addr, _h) = spawn_token_server("s3cret").await;
+    let (status, _) = http_get(addr, "/ui", None).await;
+    assert_eq!(status, 401);
+    let (status, _) = http_get(addr, "/livez", None).await;
+    assert_eq!(status, 200);
+}
+
+#[tokio::test]
+async fn rpc_token_accepts_bearer() {
+    let (addr, _h) = spawn_token_server("s3cret").await;
+    let (status, body) = http_get(addr, "/ui", Some("s3cret")).await;
+    assert_eq!(status, 200);
+    assert!(body.contains("text/html"));
+}
+
+async fn post_status(addr: SocketAddr, auth: Option<&str>) -> u16 {
+    let payload = serde_json::to_vec(&JsonRpcRequest {
+        jsonrpc: "2.0".into(),
+        method: "eth_chainId".into(),
+        params: json!([]),
+        id: json!(1),
+    })
+    .unwrap();
+    let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let (mut reader, mut writer) = stream.into_split();
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let auth_line = auth
+        .map(|t| format!("Authorization: Bearer {t}\r\n"))
+        .unwrap_or_default();
+    let req = format!(
+        "POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n{auth_line}Content-Length: {}\r\nConnection: close\r\n\r\n",
+        payload.len()
+    );
+    writer.write_all(req.as_bytes()).await.unwrap();
+    writer.write_all(&payload).await.unwrap();
+    let mut buf = Vec::new();
+    reader.read_to_end(&mut buf).await.unwrap();
+    let text = String::from_utf8_lossy(&buf);
+    text.split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+}
+
+#[tokio::test]
+async fn rpc_token_rejects_post_without_bearer() {
+    let (addr, _h) = spawn_token_server("s3cret").await;
+    assert_eq!(post_status(addr, None).await, 401);
+}
+
+#[tokio::test]
+async fn rpc_token_accepts_post_with_bearer() {
+    let (addr, _h) = spawn_token_server("s3cret").await;
+    assert_eq!(post_status(addr, Some("s3cret")).await, 200);
 }

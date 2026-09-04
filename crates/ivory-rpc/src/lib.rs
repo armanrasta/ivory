@@ -14,4 +14,4 @@ pub use context::{ContractLookup, ContractMeta, NodeRole, RpcContext};
 pub use error::RpcError;
 pub use handler::RpcHandler;
 pub use jsonrpc::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
-pub use server::{RpcState, router, serve};
+pub use server::{RpcHttpConfig, RpcState, router, router_with_config, serve};
