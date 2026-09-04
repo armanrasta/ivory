@@ -39,6 +39,7 @@ with IvoryClient("http://127.0.0.1:8545", sk) as client:
     )
     print(txh)
     print(client.get_receipt(txh))
+    print(client.estimate_gas({"to": "0x" + "11" * 20, "value": "0x1"}))
 ```
 
 `submit_decision` reads `eth_getTransactionCount` when `nonce` is omitted.

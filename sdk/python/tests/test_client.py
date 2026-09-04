@@ -71,6 +71,22 @@ def test_resolve_rpc_env(monkeypatch):
     assert resolve_rpc_url() == "http://env:1"
 
 
+def test_eth_call_mocked():
+    client = IvoryClient("http://127.0.0.1:8545", secret_key=b"\x01" * 32, chain_id=1)
+    with patch.object(client, "_rpc", return_value="0x" + "00" * 31 + "2a") as rpc:
+        out = client.eth_call({"to": "0x" + "11" * 20})
+        rpc.assert_called_once_with("eth_call", [{"to": "0x" + "11" * 20}, "latest"])
+    assert out[-1] == 0x2A
+    client.close()
+
+
+def test_estimate_gas_mocked():
+    client = IvoryClient("http://127.0.0.1:8545", secret_key=b"\x01" * 32, chain_id=1)
+    with patch.object(client, "_rpc", return_value="0x5208"):
+        assert client.estimate_gas({"to": "0x" + "11" * 20}) == 21_000
+    client.close()
+
+
 def test_resolve_rpc_public(monkeypatch):
     monkeypatch.delenv("IVORY_PUBLIC_RPC", raising=False)
     try:

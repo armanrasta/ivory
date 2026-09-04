@@ -11,7 +11,7 @@ Ivory timestamps records and tracks chain data. It is not a mining or gold-diggi
 | **Purpose** | Open-source permissioned chain you can run locally or in a small validator set |
 | **Stack** | Rust workspace · Tokio · Axum · libp2p · RocksDB · wasmi |
 | **Consensus (v1)** | Proof-of-Authority — simple validator set; PoS later if needed |
-| **API** | Ethereum-style JSON-RPC over HTTP (WebSocket upgrade stubbed for later `eth_subscribe`) |
+| **API** | Ethereum-style JSON-RPC over HTTP; WebSocket `eth_subscribe` for `newHeads` / `newPendingTransactions` |
 
 ## Status
 

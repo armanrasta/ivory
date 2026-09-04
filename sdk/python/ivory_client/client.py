@@ -135,3 +135,15 @@ class IvoryClient:
         raw = tx["input"]
         data = bytes.fromhex(raw.removeprefix("0x"))
         return decode_envelope(data)
+
+    def eth_call(self, tx: dict[str, Any], block: str = "latest") -> bytes:
+        """Simulate a call. WASM `data` is unused; return is a 32-byte `i32` or empty."""
+        raw = self._rpc("eth_call", [tx, block])
+        if not raw or raw == "0x":
+            return b""
+        return bytes.fromhex(raw.removeprefix("0x"))
+
+    def estimate_gas(self, tx: dict[str, Any], block: str = "latest") -> int:
+        """Estimate intrinsic plus VM fuel for a simulated call."""
+        raw = self._rpc("eth_estimateGas", [tx, block])
+        return int(raw, 16)

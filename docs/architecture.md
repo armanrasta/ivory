@@ -3,7 +3,7 @@
 ```
 JSON-RPC clients
         │
-   ivory-rpc          JSON-RPC · HTTP  (`eth_*`, `ivory_nodeInfo`) · `GET /ui`
+   ivory-rpc          JSON-RPC · HTTP  (`eth_*`, `eth_call`, `ivory_nodeInfo`) · WS subscribe · `GET /ui`
         │
    ivory-chain        Canonical chain · forks · BlockProducer
    ├── ivory-consensus   PoA (Ed25519 seals)

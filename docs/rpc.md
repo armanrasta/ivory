@@ -1,7 +1,7 @@
 # JSON-RPC
 
-HTTP `POST /` with JSON-RPC 2.0. WebSocket upgrade is accepted but `eth_subscribe`
-is not implemented.
+HTTP `POST /` with JSON-RPC 2.0. WebSocket upgrade supports `eth_subscribe`
+(`newHeads`, `newPendingTransactions`). HTTP subscribe returns an error.
 
 Default bind: `127.0.0.1:8545` (`rpc_addr` in `config.toml`).
 
@@ -34,11 +34,15 @@ otherwise a comma-separated origin allowlist.
 | `eth_getTransactionCount` | Live account nonce (block tags ignored) |
 | `eth_getTransactionReceipt` | `logs`, `contractAddress` on CREATE |
 | `eth_sendRawTransaction` | Hex of **bincode** `Transaction` |
+| `eth_call` | Fork-and-simulate on live state (`latest`/`pending`) or `state_at` for other tags. Returns `0x` + hex of a 32-byte big-endian WASM `i32`, or `0x` for EOA/CREATE. WASM `data` is unused (`call` has no calldata). |
+| `eth_estimateGas` | Same simulation; returns intrinsic + VM fuel (no binary search) |
+| `eth_subscribe` | WebSocket only: `newHeads`, `newPendingTransactions` |
+| `eth_unsubscribe` | WebSocket only |
 | `ivory_nodeInfo` | Role (`producer` / `follower`), address, chain id, peer id, peers, pending, head, bootstrap |
 | `ivory_listContracts` | CREATE addresses, code size, and file catalog (`name` / `schema` / `registered`) |
 
-Unknown methods return `-32601`. Not implemented: `eth_call`, `eth_estimateGas`,
-`eth_sendTransaction`.
+Unknown methods return `-32601`. Not implemented: `eth_sendTransaction`, `logs`
+subscriptions.
 
 ## Raw transaction
 
