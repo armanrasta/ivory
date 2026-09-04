@@ -722,17 +722,111 @@ fn list_contracts_matches_file_catalog() {
 fn method_not_found() {
     let h = empty_handler();
     assert!(matches!(
-        h.handle("eth_call", json!([])),
+        h.handle("eth_foo", json!([])),
         Err(RpcError::MethodNotFound(_))
     ));
 }
 
 #[test]
-fn eth_estimate_gas_not_found() {
+fn eth_subscribe_http_is_websocket_only() {
     let h = empty_handler();
     assert!(matches!(
-        h.handle("eth_estimateGas", json!([])),
-        Err(RpcError::MethodNotFound(_))
+        h.handle("eth_subscribe", json!(["newHeads"])),
+        Err(RpcError::Server(_))
+    ));
+}
+
+#[test]
+fn eth_call_eoa_does_not_mutate_live() {
+    let (h, _, state, _) = handler_with_genesis();
+    let from = keypair_from_byte(1).2;
+    let to = keypair_from_byte(2).2;
+    let mut acc = Account::new();
+    acc.balance = U256::from(1_000_000u64);
+    state.set_account(from, acc);
+    let out = h
+        .handle(
+            "eth_call",
+            json!([{
+                "from": from.to_hex(),
+                "to": to.to_hex(),
+                "value": "0x64",
+                "gas": "0x5208"
+            }]),
+        )
+        .unwrap();
+    assert_eq!(out, json!("0x"));
+    assert_eq!(
+        state.get_account(&from).unwrap().balance,
+        U256::from(1_000_000u64)
+    );
+    assert!(state.get_account(&to).is_none());
+}
+
+#[test]
+fn eth_call_wasm_returns_padded_i32() {
+    let (h, _, state, _) = handler_with_genesis();
+    let wasm = wat::parse_str(
+        r#"(module
+          (func (export "call") (result i32)
+            i32.const 42
+          )
+        )"#,
+    )
+    .unwrap();
+    let to = keypair_from_byte(3).2;
+    state.set_code(to, Bytes::from_vec(wasm));
+    let out = h
+        .handle("eth_call", json!([{ "to": to.to_hex() }, "latest"]))
+        .unwrap();
+    let hex = out.as_str().unwrap();
+    assert!(hex.starts_with("0x"));
+    assert_eq!(hex.len(), 66);
+    assert!(hex.ends_with("2a"));
+}
+
+#[test]
+fn eth_estimate_gas_transfer_at_least_intrinsic() {
+    let (h, _, state, _) = handler_with_genesis();
+    let from = keypair_from_byte(1).2;
+    let to = keypair_from_byte(2).2;
+    let mut acc = Account::new();
+    acc.balance = U256::from(1_000_000u64);
+    state.set_account(from, acc);
+    let out = h
+        .handle(
+            "eth_estimateGas",
+            json!([{
+                "from": from.to_hex(),
+                "to": to.to_hex(),
+                "value": "0x1",
+                "gas": "0x186a0"
+            }]),
+        )
+        .unwrap();
+    let qty = out.as_str().unwrap();
+    let n = u64::from_str_radix(qty.trim_start_matches("0x"), 16).unwrap();
+    assert!(n >= 21_000);
+}
+
+#[test]
+fn eth_call_unknown_block_tag_number() {
+    let (h, _, _, _) = handler_with_genesis();
+    assert!(matches!(
+        h.handle(
+            "eth_call",
+            json!([{ "to": keypair_from_byte(2).2.to_hex() }, "0x1"])
+        ),
+        Err(RpcError::BlockNotFound)
+    ));
+}
+
+#[test]
+fn eth_call_missing_tx_object() {
+    let h = empty_handler();
+    assert!(matches!(
+        h.handle("eth_call", json!([])),
+        Err(RpcError::InvalidParams(_))
     ));
 }
 

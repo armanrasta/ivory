@@ -2186,6 +2186,7 @@ dependencies = [
  "ivory-consensus",
  "ivory-core",
  "ivory-crypto",
+ "ivory-executor",
  "ivory-primitives",
  "ivory-state",
  "ivory-txpool",
@@ -2196,9 +2197,11 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tokio-test",
+ "tokio-tungstenite",
  "tonic",
  "tower-http",
  "tracing",
+ "wat",
 ]
 
 [[package]]

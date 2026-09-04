@@ -3,13 +3,15 @@
 use std::sync::atomic::Ordering;
 
 use ivory_core::{Block, Transaction};
-use ivory_primitives::{Address, H256, U256, keccak256};
+use ivory_executor::{Executor, SimulateRequest};
+use ivory_primitives::{Address, Bytes, H256, U256, keccak256};
+use ivory_state::StateDB;
 use ivory_txpool::TxOrigin;
 use serde_json::{Value, json};
 
-use crate::context::RpcContext;
+use crate::context::{RpcContext, RpcEvent};
 use crate::error::RpcError;
-use crate::types::{BlockNumberOrTag, BlockTag};
+use crate::types::{BlockNumberOrTag, BlockTag, TransactionRequest};
 
 /// Dispatches `eth_*` methods against [`RpcContext`].
 #[derive(Clone)]
@@ -48,6 +50,9 @@ impl RpcHandler {
             "eth_getTransactionReceipt" => self.get_transaction_receipt(params),
             "eth_getTransactionCount" => self.get_transaction_count(params),
             "eth_sendRawTransaction" => self.send_raw_transaction(params),
+            "eth_call" => self.eth_call(params),
+            "eth_estimateGas" => self.eth_estimate_gas(params),
+            "eth_subscribe" | "eth_unsubscribe" => Err(RpcError::Server("WebSocket only".into())),
             "ivory_nodeInfo" => self.node_info(),
             "ivory_listContracts" => self.list_contracts(),
             other => Err(RpcError::MethodNotFound(other.to_string())),
@@ -189,7 +194,45 @@ impl RpcHandler {
         if let Some(cb) = &self.ctx.on_tx {
             cb(admitted);
         }
+        self.ctx.emit(RpcEvent::NewPendingTx { hash });
         Ok(Value::String(hash.to_hex()))
+    }
+
+    fn eth_call(&self, params: Value) -> Result<Value, RpcError> {
+        let out = self.simulate(params)?;
+        Ok(Value::String(format!(
+            "0x{}",
+            hex::encode(out.call.output.as_slice())
+        )))
+    }
+
+    fn eth_estimate_gas(&self, params: Value) -> Result<Value, RpcError> {
+        let out = self.simulate(params)?;
+        Ok(Value::String(encode_qty(out.gas_used)))
+    }
+
+    fn simulate(&self, params: Value) -> Result<ivory_executor::SimulateOutcome, RpcError> {
+        let (req, tag) = parse_call_args(&params)?;
+        let state = self.state_for_tag(tag)?;
+        Executor::new(state)
+            .simulate(req)
+            .map_err(|e| RpcError::Server(e.to_string()))
+    }
+
+    fn state_for_tag(&self, tag: BlockNumberOrTag) -> Result<StateDB, RpcError> {
+        match tag {
+            BlockNumberOrTag::Tag(BlockTag::Latest)
+            | BlockNumberOrTag::Tag(BlockTag::Pending)
+            | BlockNumberOrTag::Tag(BlockTag::Safe)
+            | BlockNumberOrTag::Tag(BlockTag::Finalized) => Ok(self.ctx.state.fork()),
+            other => {
+                let block = self.block_by_tag(other).ok_or(RpcError::BlockNotFound)?;
+                self.ctx
+                    .store
+                    .state_at(&block.hash())
+                    .ok_or(RpcError::BlockNotFound)
+            }
+        }
     }
 
     fn node_info(&self) -> Result<Value, RpcError> {
@@ -361,6 +404,47 @@ fn parse_block_id_at(params: &Value, idx: usize) -> Result<BlockNumberOrTag, Rpc
         .get(idx)
         .ok_or_else(|| RpcError::InvalidParams(format!("missing block id at {idx}")))?;
     parse_block_id(v)
+}
+
+fn parse_call_args(params: &Value) -> Result<(SimulateRequest, BlockNumberOrTag), RpcError> {
+    let arr = params_array(params)?;
+    let obj = arr
+        .first()
+        .ok_or_else(|| RpcError::InvalidParams("missing transaction object".into()))?;
+    let req: TransactionRequest =
+        serde_json::from_value(obj.clone()).map_err(|e| RpcError::InvalidParams(e.to_string()))?;
+    let tag = match arr.get(1) {
+        Some(v) => parse_block_id(v)?,
+        None => BlockNumberOrTag::Tag(BlockTag::Latest),
+    };
+    let data = match req.data.as_deref() {
+        None | Some("") => Bytes::new(),
+        Some(s) => Bytes::from_vec(decode_hex(s).map_err(RpcError::InvalidParams)?),
+    };
+    Ok((
+        SimulateRequest {
+            from: req.from.unwrap_or(Address::ZERO),
+            to: req.to,
+            value: req.value.unwrap_or(U256::ZERO),
+            data,
+            gas: gas_limit(req.gas),
+        },
+        tag,
+    ))
+}
+
+fn gas_limit(gas: Option<U256>) -> u64 {
+    match gas {
+        None => 10_000_000,
+        Some(v) if v.is_zero() => 10_000_000,
+        Some(v) => {
+            if v > U256::from(u64::MAX) {
+                u64::MAX
+            } else {
+                v.low_u64()
+            }
+        }
+    }
 }
 
 fn parse_block_id(v: &Value) -> Result<BlockNumberOrTag, RpcError> {
