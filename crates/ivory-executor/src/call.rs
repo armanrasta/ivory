@@ -66,6 +66,27 @@ pub struct CallResult {
     pub logs: Vec<Log>,
     /// VM fuel consumed (0 for EOAs and CREATE).
     pub gas_used: u64,
+    /// VM `i32` return encoded as 32-byte big-endian; empty for EOA / CREATE / void.
+    pub output: Bytes,
+}
+
+impl CallResult {
+    fn empty(success: bool, gas_used: u64) -> Self {
+        Self {
+            success,
+            logs: Vec::new(),
+            gas_used,
+            output: Bytes::new(),
+        }
+    }
+}
+
+/// Encode a WASM `i32` return as a 32-byte big-endian word (Ethereum `uint256`).
+#[must_use]
+pub fn output_from_i32(value: i32) -> Bytes {
+    let mut buf = [0u8; 32];
+    buf[28..32].copy_from_slice(&value.to_be_bytes());
+    Bytes::from_slice(&buf)
 }
 
 /// Run the call: EOAs no-op, contracts via wasmi, CREATE installs no constructor.
@@ -81,29 +102,26 @@ pub fn execute_call(
     gas_limit: u64,
 ) -> Result<CallResult, ExecutionError> {
     match input.kind {
-        CallKind::Create => Ok(CallResult {
-            success: true,
-            logs: Vec::new(),
-            gas_used: 0,
-        }),
+        CallKind::Create => Ok(CallResult::empty(true, 0)),
         CallKind::Call => {
             let to = input.to.unwrap_or(input.from);
             let code = state.get_code(&to);
             if code.is_empty() {
-                return Ok(CallResult {
-                    success: true,
-                    logs: Vec::new(),
-                    gas_used: 0,
-                });
+                return Ok(CallResult::empty(true, 0));
             }
             let out = WasmVm::new()
                 .execute(&code, state, to, gas_limit)
                 .map_err(|e| ExecutionError::Vm(e.to_string()))?;
             let gas_used = gas_limit.saturating_sub(out.gas_left);
+            let output = out
+                .return_value
+                .map(output_from_i32)
+                .unwrap_or_else(Bytes::new);
             Ok(CallResult {
                 success: out.success,
                 logs: out.logs,
                 gas_used,
+                output,
             })
         }
     }

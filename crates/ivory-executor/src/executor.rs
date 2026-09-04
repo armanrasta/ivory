@@ -1,13 +1,13 @@
 //! Transaction executor.
 
 use ivory_core::{Receipt, Transaction};
-use ivory_primitives::{Address, U256, keccak256};
+use ivory_primitives::{Address, Bytes, U256, keccak256};
 use ivory_state::StateDB;
 
-use crate::call::{CallInput, CallResult, execute_call};
+use crate::call::{CallInput, CallKind, CallResult, execute_call};
 use crate::context::ExecutionContext;
 use crate::error::ExecutionError;
-use crate::gas::{GasConfig, GasMeter, compute_intrinsic_gas};
+use crate::gas::{GasConfig, GasMeter, compute_intrinsic_gas, compute_intrinsic_gas_len};
 
 /// Receipt plus gas accounting for tests and block production.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -160,6 +160,119 @@ impl Executor {
             call,
         })
     }
+
+    /// Simulate a call or CREATE on `self.state` (caller should [`StateDB::fork`]).
+    ///
+    /// Ignores nonce and `gas * gas_price`. Transfers `value` when the sender
+    /// can cover it. WASM `data` is unused by the VM (protocol `call` has no
+    /// calldata).
+    ///
+    /// # Errors
+    ///
+    /// [`ExecutionError`] on balance, gas, overflow, or VM failures.
+    pub fn simulate(&self, req: SimulateRequest) -> Result<SimulateOutcome, ExecutionError> {
+        let gas = if req.gas == 0 { 10_000_000 } else { req.gas };
+        let intrinsic = compute_intrinsic_gas_len(req.data.len(), &self.gas_config);
+        let mut meter = GasMeter::new(gas, intrinsic)?;
+
+        let sender = self.state.get_account(&req.from).unwrap_or_default();
+        if sender.balance < req.value {
+            return Err(ExecutionError::InsufficientBalance);
+        }
+
+        if !req.value.is_zero() {
+            let mut from_acc = sender.clone();
+            from_acc.balance = from_acc
+                .balance
+                .checked_sub(req.value)
+                .ok_or(ExecutionError::Overflow)?;
+            self.state.set_account(req.from, from_acc);
+        }
+
+        if let Some(to) = req.to {
+            if !req.value.is_zero() {
+                let mut recipient = self.state.get_account(&to).unwrap_or_default();
+                recipient.balance = recipient
+                    .balance
+                    .checked_add(req.value)
+                    .ok_or(ExecutionError::Overflow)?;
+                self.state.set_account(to, recipient);
+            }
+        } else {
+            let created = Address::create(&req.from, sender.nonce);
+            let mut account = self.state.get_account(&created).unwrap_or_default();
+            if !req.value.is_zero() {
+                account.balance = account
+                    .balance
+                    .checked_add(req.value)
+                    .ok_or(ExecutionError::Overflow)?;
+            }
+            let code = req.data.clone();
+            account.code_hash = keccak256(code.as_slice());
+            self.state.set_account(created, account);
+            self.state.set_code(created, code);
+        }
+
+        let input = CallInput {
+            kind: if req.to.is_none() {
+                CallKind::Create
+            } else {
+                CallKind::Call
+            },
+            from: req.from,
+            to: req.to,
+            value: req.value,
+            data: req.data,
+        };
+        let call = execute_call(&input, &self.state, meter.remaining)?;
+        if call.gas_used > 0 {
+            meter.spend(call.gas_used)?;
+        }
+
+        Ok(SimulateOutcome {
+            call,
+            gas_used: meter.gas_used(),
+            intrinsic,
+        })
+    }
+}
+
+/// RPC / `eth_call` inputs. Nonce and gas price are ignored.
+#[derive(Clone, Debug)]
+pub struct SimulateRequest {
+    /// Sender (`0x0` if omitted by the client).
+    pub from: Address,
+    /// Recipient (`None` is CREATE).
+    pub to: Option<Address>,
+    /// Value to transfer on the fork.
+    pub value: U256,
+    /// Calldata or CREATE init code (WASM `call` ignores calldata).
+    pub data: Bytes,
+    /// Gas limit (`0` means 10_000_000).
+    pub gas: u64,
+}
+
+impl Default for SimulateRequest {
+    fn default() -> Self {
+        Self {
+            from: Address::ZERO,
+            to: None,
+            value: U256::ZERO,
+            data: Bytes::new(),
+            gas: 10_000_000,
+        }
+    }
+}
+
+/// Result of [`Executor::simulate`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SimulateOutcome {
+    /// Call interpreter result (including encoded output).
+    pub call: CallResult,
+    /// Intrinsic plus VM fuel (`eth_estimateGas`).
+    pub gas_used: u64,
+    /// Intrinsic component of [`Self::gas_used`].
+    pub intrinsic: u64,
 }
 
 #[cfg(test)]
@@ -628,5 +741,82 @@ mod tests {
             exec.execute_transaction(&transfer_tx(addr(1), addr(2), 0, 0, 21_000, 1), &mut ctx),
             Err(ExecutionError::Vm(_))
         ));
+    }
+
+    #[test]
+    fn simulate_transfer_does_not_touch_live() {
+        let live = StateDB::new();
+        let from = addr(1);
+        let to = addr(2);
+        live.set_account(from, funded(0, 1_000_000));
+        let fork = live.fork();
+        let exec = Executor::new(fork);
+        let out = exec
+            .simulate(SimulateRequest {
+                from,
+                to: Some(to),
+                value: U256::from(100u64),
+                data: Bytes::new(),
+                gas: 21_000,
+            })
+            .unwrap();
+        assert!(out.call.success);
+        assert!(out.call.output.as_slice().is_empty());
+        assert_eq!(out.gas_used, 21_000);
+        assert_eq!(
+            live.get_account(&from).unwrap().balance,
+            U256::from(1_000_000u64)
+        );
+        assert!(live.get_account(&to).is_none());
+        assert_eq!(
+            exec.state().get_account(&to).unwrap().balance,
+            U256::from(100u64)
+        );
+        assert_eq!(exec.state().get_account(&from).unwrap().nonce, 0);
+    }
+
+    #[test]
+    fn simulate_wasm_returns_padded_i32() {
+        let wasm = wat::parse_str(
+            r#"(module
+              (func (export "call") (result i32)
+                i32.const 42
+              )
+            )"#,
+        )
+        .unwrap();
+        let live = StateDB::new();
+        live.set_code(addr(2), Bytes::from_vec(wasm));
+        let before = live.get_storage(&addr(2), &H256::ZERO);
+        let exec = Executor::new(live.fork());
+        let out = exec
+            .simulate(SimulateRequest {
+                from: addr(1),
+                to: Some(addr(2)),
+                value: U256::ZERO,
+                data: Bytes::new(),
+                gas: 100_000,
+            })
+            .unwrap();
+        assert_eq!(out.call.output, crate::output_from_i32(42));
+        assert_eq!(live.get_storage(&addr(2), &H256::ZERO), before);
+        assert!(out.gas_used >= 21_000);
+    }
+
+    #[test]
+    fn simulate_insufficient_value() {
+        let state = StateDB::new();
+        state.set_account(addr(1), funded(0, 10));
+        let exec = Executor::new(state);
+        assert_eq!(
+            exec.simulate(SimulateRequest {
+                from: addr(1),
+                to: Some(addr(2)),
+                value: U256::from(11u64),
+                data: Bytes::new(),
+                gas: 21_000,
+            }),
+            Err(ExecutionError::InsufficientBalance)
+        );
     }
 }

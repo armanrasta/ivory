@@ -8,8 +8,8 @@ pub mod error;
 pub mod executor;
 pub mod gas;
 
-pub use call::{CallInput, CallKind, CallResult, execute_call};
+pub use call::{CallInput, CallKind, CallResult, execute_call, output_from_i32};
 pub use context::ExecutionContext;
 pub use error::ExecutionError;
-pub use executor::{ExecutionOutcome, Executor};
-pub use gas::{GasConfig, GasMeter, compute_intrinsic_gas};
+pub use executor::{ExecutionOutcome, Executor, SimulateOutcome, SimulateRequest};
+pub use gas::{GasConfig, GasMeter, compute_intrinsic_gas, compute_intrinsic_gas_len};

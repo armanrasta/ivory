@@ -82,7 +82,13 @@ impl GasMeter {
 /// Intrinsic gas: base cost plus per-byte calldata.
 #[must_use]
 pub fn compute_intrinsic_gas(tx: &Transaction, cfg: &GasConfig) -> u64 {
-    let data_cost = (tx.data_len() as u64).saturating_mul(cfg.data_gas_cost);
+    compute_intrinsic_gas_len(tx.data_len(), cfg)
+}
+
+/// Intrinsic gas from calldata length (simulation without a signed tx).
+#[must_use]
+pub fn compute_intrinsic_gas_len(data_len: usize, cfg: &GasConfig) -> u64 {
+    let data_cost = (data_len as u64).saturating_mul(cfg.data_gas_cost);
     cfg.tx_gas_cost.saturating_add(data_cost)
 }
 
