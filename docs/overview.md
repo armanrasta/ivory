@@ -28,10 +28,10 @@ mining or speculative “gold digging” network.
 - **VM** — wasmi with fuel, `env.storage_get` / `env.storage_set` / `env.emit_log`
 - **Consensus** — PoA validator set; each seal is an Ed25519 signature over the header hash with empty `extra_data`
 - **Chain** — in-memory `BlockStore`, longest-chain reorgs that roll live state back, `BlockProducer` (`ivory-chain`)
-- **Network** — gossipsub topics `ivory/blocks/1`, `ivory/txs/1`; `ivory/sync/1` for `GetBlock`
+- **Network** — gossipsub topics `ivory/blocks/1`, `ivory/txs/1`; `ivory/sync/1` for `GetBlock` / `GetHeader` (header announced before the body)
 - **RPC** — `eth_*` subset over HTTP plus `ivory_nodeInfo` / `ivory_listContracts`; `eth_getProof` walks Patricia nodes; historical tags use `state_at`. `GET /ui` explorer. `eth_sendRawTransaction` gossips after admit. Unknown methods return JSON-RPC `-32601`
 - **Server** — `ivory init` / `ivory run` with `role` master|slave; restart reloads RocksDB; two-node smoke in `bin/ivory/tests/two_node.rs`
-- **Dev** — `ivory-dev new` / `deploy` / `status` against local or `IVORY_PUBLIC_RPC`
+- **Dev** — `ivory-dev new` / `deploy` / `status` against local or `IVORY_PUBLIC_RPC`; `ivory-light follow` walks headers
 - **Client** — `sdk/python` (`ivory-client`) for apps; URL from constructor / `IVORY_RPC_URL` / `IVORY_PUBLIC_RPC`
 
 Header hashing is **bincode + keccak256**. Wire encoding stays bincode (not RLP). See [protocol.md](protocol.md).

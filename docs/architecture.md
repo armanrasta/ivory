@@ -36,8 +36,9 @@ in-memory `BlockStore` and executor, then serves JSON-RPC and libp2p.
 
 ## Sync
 
-Blocks and txs move on gossipsub (`ivory/blocks/1`, `ivory/txs/1`). Missing
-parents use `ivory/sync/1` (`GetBlock`). There is no headers-first pipeline.
+Blocks and txs move on gossipsub (`ivory/blocks/1`, `ivory/txs/1`). A block
+announcement is the header, then the body. Missing parents use `ivory/sync/1`
+(`GetBlock` / `GetHeader`).
 
 ## Reorgs
 

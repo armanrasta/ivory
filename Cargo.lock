@@ -2149,6 +2149,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ivory-light"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "hex",
+ "ivory-core",
+ "ivory-primitives",
+ "serde_json",
+ "thiserror 1.0.69",
+ "ureq",
+]
+
+[[package]]
 name = "ivory-network"
 version = "0.1.0"
 dependencies = [

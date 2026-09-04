@@ -133,6 +133,54 @@ async fn gossip_block() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gossip_header_then_block() {
+    let (a, _, _b, mut rb) = pair().await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let block = empty_block(3);
+    let hash = block.hash();
+    a.broadcast_block(block).unwrap();
+    let (got_header, got_block) = timeout(Duration::from_secs(8), async {
+        let mut header = None;
+        let mut body = None;
+        loop {
+            match rb.recv().await {
+                Some(NetworkEvent::HeaderReceived(h)) if h.hash() == hash => header = Some(h),
+                Some(NetworkEvent::BlockReceived(b)) if b.hash() == hash => body = Some(b),
+                Some(_) => continue,
+                None => panic!("closed"),
+            }
+            if let (Some(h), Some(b)) = (header.clone(), body.clone()) {
+                return (h, b);
+            }
+        }
+    })
+    .await
+    .expect("header then block");
+    assert_eq!(got_header.hash(), hash);
+    assert_eq!(got_block.hash(), hash);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_get_header_request() {
+    let (a, _, _b, mut rb) = pair().await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let hash = H256::from_bytes([43u8; 32]);
+    a.request_header(hash).unwrap();
+    let got = timeout(Duration::from_secs(8), async {
+        loop {
+            match rb.recv().await {
+                Some(NetworkEvent::HeaderRequest(h)) => return h,
+                Some(_) => continue,
+                None => panic!("closed"),
+            }
+        }
+    })
+    .await
+    .expect("get-header");
+    assert_eq!(got, hash);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sync_get_block_request() {
     let (a, _, _b, mut rb) = pair().await;
     tokio::time::sleep(Duration::from_millis(400)).await;

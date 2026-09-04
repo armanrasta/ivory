@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use ivory_core::{Block, Transaction};
+use ivory_core::{Block, BlockHeader, Transaction};
 use ivory_primitives::H256;
 use libp2p::futures::StreamExt;
 use libp2p::multiaddr::Protocol;
@@ -46,6 +46,10 @@ pub enum NetworkEvent {
     TxReceived(Transaction),
     /// Peer asked for a block hash (node should reply if it has it).
     BlockRequest(H256),
+    /// A header arrived (bodies follow via [`Self::BlockReceived`] or [`NetworkHandle::request_block`]).
+    HeaderReceived(BlockHeader),
+    /// Peer asked for a header hash.
+    HeaderRequest(H256),
     /// New connection.
     PeerConnected(PeerId),
     /// Connection lost.
@@ -56,8 +60,10 @@ pub enum NetworkEvent {
 
 enum Command {
     BroadcastBlock(Block),
+    BroadcastHeader(BlockHeader),
     BroadcastTx(Transaction),
     RequestBlock(H256),
+    RequestHeader(H256),
     Dial(Multiaddr),
 }
 
@@ -88,7 +94,7 @@ impl NetworkHandle {
         Arc::clone(&self.peers)
     }
 
-    /// Gossip a sealed block.
+    /// Gossip a sealed block (header first, then the full body).
     ///
     /// # Errors
     ///
@@ -96,6 +102,17 @@ impl NetworkHandle {
     pub fn broadcast_block(&self, block: Block) -> Result<(), NetworkError> {
         self.tx
             .send(Command::BroadcastBlock(block))
+            .map_err(|_| NetworkError::Stopped)
+    }
+
+    /// Gossip a header without a body.
+    ///
+    /// # Errors
+    ///
+    /// [`NetworkError::Stopped`] if the swarm task has exited.
+    pub fn broadcast_header(&self, header: BlockHeader) -> Result<(), NetworkError> {
+        self.tx
+            .send(Command::BroadcastHeader(header))
             .map_err(|_| NetworkError::Stopped)
     }
 
@@ -118,6 +135,17 @@ impl NetworkHandle {
     pub fn request_block(&self, hash: H256) -> Result<(), NetworkError> {
         self.tx
             .send(Command::RequestBlock(hash))
+            .map_err(|_| NetworkError::Stopped)
+    }
+
+    /// Ask peers for a missing header.
+    ///
+    /// # Errors
+    ///
+    /// [`NetworkError::Stopped`] if the swarm task has exited.
+    pub fn request_header(&self, hash: H256) -> Result<(), NetworkError> {
+        self.tx
+            .send(Command::RequestHeader(hash))
             .map_err(|_| NetworkError::Stopped)
     }
 
@@ -248,10 +276,21 @@ async fn run_loop(
 fn handle_command(swarm: &mut Swarm<IvoryBehaviour>, cmd: Command) -> Result<(), NetworkError> {
     match cmd {
         Command::BroadcastBlock(block) => {
+            publish(
+                swarm,
+                TOPIC_BLOCKS,
+                &NetworkMessage::Header(block.header.clone()),
+            )?;
             publish(swarm, TOPIC_BLOCKS, &NetworkMessage::Block(block))
+        }
+        Command::BroadcastHeader(header) => {
+            publish(swarm, TOPIC_BLOCKS, &NetworkMessage::Header(header))
         }
         Command::BroadcastTx(tx) => publish(swarm, TOPIC_TXS, &NetworkMessage::Transaction(tx)),
         Command::RequestBlock(hash) => publish(swarm, TOPIC_SYNC, &NetworkMessage::GetBlock(hash)),
+        Command::RequestHeader(hash) => {
+            publish(swarm, TOPIC_SYNC, &NetworkMessage::GetHeader(hash))
+        }
         Command::Dial(addr) => swarm
             .dial(addr)
             .map_err(|e| NetworkError::Swarm(e.to_string())),
@@ -304,6 +343,12 @@ fn handle_swarm_event(
             }
             Ok(NetworkMessage::GetBlock(hash)) => {
                 let _ = event_tx.send(NetworkEvent::BlockRequest(hash));
+            }
+            Ok(NetworkMessage::Header(header)) => {
+                let _ = event_tx.send(NetworkEvent::HeaderReceived(header));
+            }
+            Ok(NetworkMessage::GetHeader(hash)) => {
+                let _ = event_tx.send(NetworkEvent::HeaderRequest(hash));
             }
             Err(_) => {
                 tracing::debug!("dropping malformed gossip payload");

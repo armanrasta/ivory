@@ -1,0 +1,25 @@
+[package]
+name = "ivory-light"
+description = "Header-chain walker over ivory_getHeaderByNumber"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "ivory-light"
+path = "src/main.rs"
+
+[lib]
+name = "ivory_light"
+path = "src/lib.rs"
+
+[dependencies]
+ivory-core = { workspace = true }
+ivory-primitives = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+ureq = { version = "2.9", features = ["json"] }

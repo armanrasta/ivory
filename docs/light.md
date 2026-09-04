@@ -22,8 +22,15 @@ A header-only node:
 | `ivory_getHeaderByNumber` | Header fields only |
 | `eth_getBlockByNumber` | Same header plus a **transaction hash list** |
 
-Use `ivory_getHeaderByNumber` when you do not want hashes of txs. There is no
-headers-first sync protocol yet; gossip still carries full blocks.
+Use `ivory_getHeaderByNumber` when you do not want hashes of txs.
+
+Gossip publishes the **header first**, then the full block, on `ivory/blocks/1`.
+`ivory/sync/1` accepts `GetHeader` as well as `GetBlock`. A full node that
+hears a new header requests the body; it does not insert a header-only stub
+(that would collide when the body arrives).
+
+`ivory-light follow --rpc <url>` walks `ivory_getHeaderByNumber` and checks
+`parent_hash`, height + 1, and a non-empty `extraData` seal.
 
 ## Persistence
 

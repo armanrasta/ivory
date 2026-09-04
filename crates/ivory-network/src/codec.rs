@@ -1,6 +1,6 @@
 //! Bincode wire format for gossip payloads.
 
-use ivory_core::{Block, Transaction};
+use ivory_core::{Block, BlockHeader, Transaction};
 use ivory_primitives::H256;
 use serde::{Deserialize, Serialize};
 
@@ -15,6 +15,10 @@ pub enum NetworkMessage {
     Transaction(Transaction),
     /// Request a missing block by hash (parent walk).
     GetBlock(H256),
+    /// Header-only announcement (bodies fetched with [`Self::GetBlock`]).
+    Header(BlockHeader),
+    /// Request a header by hash.
+    GetHeader(H256),
 }
 
 impl NetworkMessage {
@@ -107,6 +111,15 @@ mod tests {
             NetworkMessage::decode(&[0xff, 0x00, 0x01]),
             Err(NetworkError::InvalidMessage)
         ));
+    }
+
+    #[test]
+    fn roundtrip_header_and_get_header() {
+        let header = empty_block().header;
+        let msg = NetworkMessage::Header(header.clone());
+        assert_eq!(NetworkMessage::decode(&msg.encode().unwrap()).unwrap(), msg);
+        let get = NetworkMessage::GetHeader(header.hash());
+        assert_eq!(NetworkMessage::decode(&get.encode().unwrap()).unwrap(), get);
     }
 
     #[test]

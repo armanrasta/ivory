@@ -271,6 +271,18 @@ pub async fn run_node(
                                 let _ = import_net.broadcast_block(block);
                             }
                         }
+                        NetworkEvent::HeaderReceived(header) => {
+                            import_metrics.p2p_message("header");
+                            if import_store.get_block(&header.hash()).is_none() {
+                                let _ = import_net.request_block(header.hash());
+                            }
+                        }
+                        NetworkEvent::HeaderRequest(hash) => {
+                            import_metrics.p2p_message("get_header");
+                            if let Some(block) = import_store.get_block(&hash) {
+                                let _ = import_net.broadcast_header(block.header);
+                            }
+                        }
                         NetworkEvent::PeerConnected(_) | NetworkEvent::PeerDisconnected(_) => {
                             import_metrics.set_p2p_peers(import_net.peer_count() as u64);
                         }

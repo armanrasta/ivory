@@ -1,7 +1,7 @@
 //! # Ivory Network
 //!
-//! libp2p gossip for blocks and transactions, plus a simple missing-block
-//! request topic for parent-hash walks.
+//! libp2p gossip for headers, blocks, and transactions, plus a simple
+//! missing-block / missing-header request topic for parent-hash walks.
 
 pub mod behaviour;
 pub mod codec;

@@ -93,6 +93,7 @@ crates/
   ivory-crypto/       Ed25519 sign/verify
 bin/ivory/            Server CLI (`init` / `run`)
 tools/ivory-dev/      Project toolchain (`new` / `deploy` / `status`)
+tools/ivory-light/    Header-chain walker (`follow` via `ivory_getHeaderByNumber`)
 sdk/python/           App client (`ivory-client`)
 deploy/               Docker entrypoint + Helm chart (`chart/ivory`)
 docs/                 Architecture, products, RPC, protocol, envelope, deploy
