@@ -23,6 +23,8 @@ pub struct NetworkConfig {
     pub listen: Multiaddr,
     /// Peers to dial at start.
     pub bootstrap: Vec<Multiaddr>,
+    /// If non-empty, only these peer ids may stay connected (Noise stays).
+    pub allowlist: Vec<PeerId>,
 }
 
 impl Default for NetworkConfig {
@@ -30,6 +32,7 @@ impl Default for NetworkConfig {
         Self {
             listen: "/ip4/127.0.0.1/tcp/0".parse().expect("static multiaddr"),
             bootstrap: Vec::new(),
+            allowlist: Vec::new(),
         }
     }
 }
@@ -160,7 +163,13 @@ pub async fn start(
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     let peers = Arc::new(AtomicUsize::new(0));
 
-    tokio::spawn(run_loop(swarm, cmd_rx, event_tx, Arc::clone(&peers)));
+    tokio::spawn(run_loop(
+        swarm,
+        cmd_rx,
+        event_tx,
+        Arc::clone(&peers),
+        config.allowlist.clone(),
+    ));
 
     Ok((
         NetworkHandle {
@@ -217,6 +226,7 @@ async fn run_loop(
     mut cmd_rx: mpsc::UnboundedReceiver<Command>,
     event_tx: mpsc::UnboundedSender<NetworkEvent>,
     peers: Arc<AtomicUsize>,
+    allowlist: Vec<PeerId>,
 ) {
     loop {
         tokio::select! {
@@ -229,7 +239,7 @@ async fn run_loop(
                 }
             }
             event = swarm.select_next_some() => {
-                handle_swarm_event(&mut swarm, event, &event_tx, &peers);
+                handle_swarm_event(&mut swarm, event, &event_tx, &peers, &allowlist);
             }
         }
     }
@@ -253,17 +263,26 @@ fn handle_swarm_event(
     event: SwarmEvent<IvoryBehaviourEvent>,
     event_tx: &mpsc::UnboundedSender<NetworkEvent>,
     peers: &AtomicUsize,
+    allowlist: &[PeerId],
 ) {
     match event {
         SwarmEvent::NewListenAddr { address, .. } => {
             let _ = event_tx.send(NetworkEvent::ListenAddr(address));
         }
         SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+            if !allowlist.is_empty() && !allowlist.contains(&peer_id) {
+                tracing::info!(%peer_id, "rejecting peer not on p2p allowlist");
+                let _ = swarm.disconnect_peer_id(peer_id);
+                return;
+            }
             swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
             peers.fetch_add(1, Ordering::Relaxed);
             let _ = event_tx.send(NetworkEvent::PeerConnected(peer_id));
         }
         SwarmEvent::ConnectionClosed { peer_id, .. } => {
+            if !allowlist.is_empty() && !allowlist.contains(&peer_id) {
+                return;
+            }
             swarm
                 .behaviour_mut()
                 .gossipsub

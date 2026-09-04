@@ -11,5 +11,5 @@ pub mod service;
 pub use behaviour::{PROTOCOL_VERSION, TOPIC_BLOCKS, TOPIC_SYNC, TOPIC_TXS};
 pub use codec::NetworkMessage;
 pub use error::NetworkError;
-pub use libp2p::Multiaddr;
+pub use libp2p::{Multiaddr, PeerId};
 pub use service::{NetworkConfig, NetworkEvent, NetworkHandle, start};

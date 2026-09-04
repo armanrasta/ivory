@@ -210,6 +210,7 @@ async fn bootstrap_dials_listen_addr() {
     let (b, mut rb) = start(NetworkConfig {
         listen: "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
         bootstrap: vec![addr_a],
+        allowlist: Vec::new(),
     })
     .await
     .unwrap();
@@ -217,4 +218,36 @@ async fn bootstrap_dials_listen_addr() {
     wait_connected(&mut ra).await;
     wait_connected(&mut rb).await;
     assert_ne!(a.peer_id(), b.peer_id());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn allowlist_accepts_listed_peer_and_denies_third() {
+    let (b, mut rb) = start(NetworkConfig::default()).await.unwrap();
+    let _ = wait_listen(&mut rb).await;
+    let (a, mut ra) = start(NetworkConfig {
+        listen: "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
+        bootstrap: Vec::new(),
+        allowlist: vec![b.peer_id()],
+    })
+    .await
+    .unwrap();
+    let addr_a = wait_listen(&mut ra).await;
+    b.dial(addr_a.clone()).unwrap();
+    timeout(Duration::from_secs(10), async {
+        loop {
+            if a.peer_count() == 1 && b.peer_count() == 1 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("listed peers connected");
+
+    let (c, mut rc) = start(NetworkConfig::default()).await.unwrap();
+    let _ = wait_listen(&mut rc).await;
+    c.dial(addr_a).unwrap();
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert_eq!(a.peer_count(), 1);
+    let _ = c;
 }
