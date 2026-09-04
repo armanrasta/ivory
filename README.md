@@ -1,8 +1,8 @@
 # Ivory
 
-A modular **permissioned blockchain** in Rust: Proof-of-Authority, libp2p gossip, JSON-RPC, WASM contracts, and optional structured payloads in `tx.data`.
+A modular **permissioned ledger** in Rust: Proof-of-Authority, libp2p gossip, JSON-RPC, file-backed WASM contracts, and optional structured payloads in `tx.data`.
 
-Ivory is early. A local node can init a data directory, persist blocks, produce PoA-sealed blocks, gossip over libp2p, admit signed transfers, serve JSON-RPC, and run WASM contracts through wasmi.
+Ivory timestamps records and tracks chain data. It is not a mining or gold-digging network. A local node can init a data directory, persist blocks, produce PoA-sealed blocks, gossip over libp2p, admit signed transfers, serve JSON-RPC, and run WASM contracts from YAML/WAT files.
 
 ## Why Ivory
 
@@ -28,8 +28,10 @@ Ivory is early. A local node can init a data directory, persist blocks, produce 
 | Consensus | `ivory-consensus` | Done — PoA validator set, Ed25519 seals in `extra_data` |
 | Chain | `ivory-chain` | Done — in-memory store, reorgs, block production |
 | P2P | `ivory-network` | Done — gossipsub blocks/txs + sync `GetBlock` |
-| RPC | `ivory-rpc` | Done — MVP `eth_*` over HTTP (`POST /`) |
-| Node binary | `bin/ivory` | Done — persist, RPC gossip, `init` / `run` |
+| RPC | `ivory-rpc` | Done — `eth_*` + `ivory_nodeInfo` / `ivory_listContracts`; `GET /ui` |
+| Server | `bin/ivory` | Done — persist, master/slave `role`, `init` / `run` |
+| Dev | `tools/ivory-dev` | Done — `new` / `deploy` / `status` |
+| Client | `sdk/python` | Done — JSON-RPC `ivory-client` |
 
 Track work on the [project board](https://github.com/users/armanrasta/projects/6) and [roadmap issue #24](https://github.com/armanrasta/ivory/issues/24).
 
@@ -64,14 +66,14 @@ cargo build
 cargo test -p ivory-primitives -p ivory-crypto -p ivory-core -p ivory-state -p ivory-storage
 ```
 
-Initialize a data dir and run a local validator (JSON-RPC on `127.0.0.1:8545` by default):
+Initialize a data dir and run a local producer (JSON-RPC on `127.0.0.1:8545` by default; explorer at `/ui`):
 
 ```bash
 cargo run -p ivory -- init
 cargo run -p ivory -- run
 ```
 
-`eth_sendRawTransaction` takes hex-encoded **bincode** of `Transaction` (keccak256 domain; see [docs/protocol.md](docs/protocol.md)). State roots stay `0x0` until the Merkle trie (#22). Two-node compose: [docs/deploy.md](docs/deploy.md). Python client: [`sdk/python`](sdk/python).
+`eth_sendRawTransaction` takes hex-encoded **bincode** of `Transaction` (keccak256 domain; see [docs/protocol.md](docs/protocol.md)). **Server** (`ivory init` / `run`), **dev** (`ivory-dev new` / `deploy`), **client** (`sdk/python`): [docs/products.md](docs/products.md). State roots stay `0x0` until the Merkle trie (#22). Two-node compose: [docs/deploy.md](docs/deploy.md). Explorer: `/ui`.
 
 ## Workspace layout
 
@@ -89,10 +91,11 @@ crates/
   ivory-network/      libp2p gossipsub + sync scaffold
   ivory-rpc/          JSON-RPC handlers + Axum HTTP
   ivory-crypto/       Ed25519 sign/verify
-bin/ivory/            Node CLI (`init` / `run`)
-sdk/python/           JSON-RPC client
+bin/ivory/            Server CLI (`init` / `run`)
+tools/ivory-dev/      Project toolchain (`new` / `deploy` / `status`)
+sdk/python/           App client (`ivory-client`)
 deploy/               Docker entrypoint
-docs/                 Architecture, RPC, protocol, envelope, deploy
+docs/                 Architecture, products, RPC, protocol, envelope, deploy
 ```
 
 ## Benchmarks

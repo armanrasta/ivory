@@ -1,6 +1,9 @@
 # Ivory overview
 
-Ivory is a Rust workspace for a **permissioned** Proof-of-Authority chain: local `init`/`run`, gossip, JSON-RPC, WASM, and optional structured `tx.data`.
+Ivory is a Rust workspace for a **permissioned** Proof-of-Authority **ledger**:
+local `init`/`run`, gossip, JSON-RPC, file-backed WASM contracts, and optional
+structured `tx.data`. It records and tracks chain information. It is not a
+mining or speculative “gold digging” network.
 
 ## Design choices (v1)
 
@@ -26,14 +29,16 @@ Ivory is a Rust workspace for a **permissioned** Proof-of-Authority chain: local
 - **Consensus** — PoA validator set; each seal is an Ed25519 signature over the header hash with empty `extra_data`
 - **Chain** — in-memory `BlockStore`, longest-chain reorgs, `BlockProducer` (`ivory-chain`)
 - **Network** — gossipsub topics `ivory/blocks/1`, `ivory/txs/1`; `ivory/sync/1` for `GetBlock`
-- **RPC** — `eth_*` subset over HTTP; `eth_sendRawTransaction` gossips after admit. Unknown methods return JSON-RPC `-32601`
-- **Node** — `ivory init` / `ivory run`; restart reloads RocksDB; two-node smoke in `bin/ivory/tests/two_node.rs`
+- **RPC** — `eth_*` subset over HTTP plus `ivory_nodeInfo` / `ivory_listContracts`; `GET /ui` explorer. `eth_sendRawTransaction` gossips after admit. Unknown methods return JSON-RPC `-32601`
+- **Server** — `ivory init` / `ivory run` with `role` master|slave; restart reloads RocksDB; two-node smoke in `bin/ivory/tests/two_node.rs`
+- **Dev** — `ivory-dev new` / `deploy` / `status` against local or `IVORY_PUBLIC_RPC`
+- **Client** — `sdk/python` (`ivory-client`) for apps; URL from constructor / `IVORY_RPC_URL` / `IVORY_PUBLIC_RPC`
 
 Header hashing is **bincode + keccak256**. Wire encoding stays bincode (not RLP). See [protocol.md](protocol.md).
 
 ## Docs
 
-- [architecture.md](architecture.md) · [rpc.md](rpc.md) · [protocol.md](protocol.md) · [quant-envelope.md](quant-envelope.md) · [deploy.md](deploy.md)
+- [products.md](products.md) · [architecture.md](architecture.md) · [rpc.md](rpc.md) · [protocol.md](protocol.md) · [quant-envelope.md](quant-envelope.md) · [contracts.md](contracts.md) · [deploy.md](deploy.md)
 
 ## What is next
 

@@ -3,7 +3,7 @@
 ```
 JSON-RPC clients
         │
-   ivory-rpc          JSON-RPC · HTTP  (`eth_*`)
+   ivory-rpc          JSON-RPC · HTTP  (`eth_*`, `ivory_nodeInfo`) · `GET /ui`
         │
    ivory-chain        Canonical chain · forks · BlockProducer
    ├── ivory-consensus   PoA (Ed25519 seals)
@@ -21,7 +21,7 @@ JSON-RPC clients
 ## Process
 
 `ivory init --data-dir DIR` writes `config.toml`, `genesis.json`, `validator.key`,
-and an empty `chain/` RocksDB dir.
+an empty `chain/` RocksDB dir, and `contracts/` for YAML/WAT packages.
 
 `ivory run --data-dir DIR` loads those files, replays persisted blocks into the
 in-memory `BlockStore` and executor, then serves JSON-RPC and libp2p.
@@ -30,6 +30,8 @@ in-memory `BlockStore` and executor, then serves JSON-RPC and libp2p.
 - **Follower** otherwise (`bootstrap` points at a validator multiaddr).
 - After `eth_sendRawTransaction` admits a tx, the node gossips it.
 - New blocks are written to RocksDB. Restart reloads them.
+- `GET /ui` serves the read-only ledger explorer (blocks, file-backed contracts, producer vs follower stats).
+- `ivory-dev deploy` compiles a contract file and CREATE-submits it onto a server.
 
 ## Sync
 
