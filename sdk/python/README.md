@@ -1,7 +1,19 @@
-# Ivory Python client
+# Ivory client
 
-Pure-Python JSON-RPC client for a running `ivory` node. No PyO3; it talks HTTP
-`eth_*` and signs Ed25519 over `keccak256(bincode(unsigned tx))`.
+Pure-Python JSON-RPC client for an **Ivory server**. Django and other apps import
+this package; they do not run a node.
+
+```python
+from ivory_client import IvoryClient
+
+# Self-hosted or compose: pass the URL, or set IVORY_RPC_URL.
+# Hosted “our chain”: IvoryClient(chain="public", secret_key=...) needs IVORY_PUBLIC_RPC.
+with IvoryClient("http://127.0.0.1:8545", sk) as client:
+    print(client.chain_id(), client.get_block_number())
+```
+
+Default URL order: constructor `rpc_url`, then `chain="public"` → `IVORY_PUBLIC_RPC`,
+then `IVORY_RPC_URL`, then `http://127.0.0.1:8545`.
 
 ## Install
 
@@ -23,14 +35,16 @@ with IvoryClient("http://127.0.0.1:8545", sk) as client:
         "dec-1",
         "app.v1",
         [("score", "0.82")],
-        to_hex="0x" + "11" * 20,  # any recipient; envelope is in data
+        to_hex="0x" + "11" * 20,
     )
     print(txh)
     print(client.get_receipt(txh))
 ```
 
 `submit_decision` reads `eth_getTransactionCount` when `nonce` is omitted.
-Track nonce yourself if you fire many txs before inclusion.
+
+Django (or any app): add `ivory-client` to dependencies and construct `IvoryClient`
+in settings or a service layer with the server URL. There is no Django-specific package.
 
 ## Tests
 
@@ -38,11 +52,5 @@ Track nonce yourself if you fire many txs before inclusion.
 pytest sdk/python/tests
 ```
 
-Unit tests mock HTTP. Against a live node (needs Phase 1 datadir):
-
-```bash
-cargo run -p ivory -- init --data-dir /tmp/ivory-py
-cargo run -p ivory -- run --data-dir /tmp/ivory-py
-```
-
 Envelope spec: [../../docs/quant-envelope.md](../../docs/quant-envelope.md).
+Products: [../../docs/products.md](../../docs/products.md).

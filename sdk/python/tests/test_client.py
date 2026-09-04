@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 from ivory_client.codec import decode_envelope, encode_envelope, keccak256
-from ivory_client.client import IvoryClient
+from ivory_client.client import IvoryClient, resolve_rpc_url
 
 
 def test_envelope_roundtrip():
@@ -60,3 +60,23 @@ def test_submit_decision_mocked():
     assert txh.startswith("0x")
     assert len(txh) == 66
     client.close()
+
+
+def test_resolve_rpc_explicit():
+    assert resolve_rpc_url("http://node:8545/") == "http://node:8545"
+
+
+def test_resolve_rpc_env(monkeypatch):
+    monkeypatch.setenv("IVORY_RPC_URL", "http://env:1")
+    assert resolve_rpc_url() == "http://env:1"
+
+
+def test_resolve_rpc_public(monkeypatch):
+    monkeypatch.delenv("IVORY_PUBLIC_RPC", raising=False)
+    try:
+        resolve_rpc_url(chain="public")
+        raise AssertionError("expected ValueError")
+    except ValueError:
+        pass
+    monkeypatch.setenv("IVORY_PUBLIC_RPC", "http://public:8545")
+    assert resolve_rpc_url(chain="public") == "http://public:8545"

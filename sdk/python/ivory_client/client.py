@@ -1,7 +1,8 @@
-"""HTTP JSON-RPC client for an Ivory node."""
+"""HTTP JSON-RPC client for an Ivory server."""
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import httpx
@@ -9,17 +10,35 @@ import httpx
 from ivory_client.codec import decode_envelope, encode_envelope, encode_signed_tx
 
 
+def resolve_rpc_url(rpc_url: str | None = None, chain: str | None = None) -> str:
+    """Pick a server URL: explicit, `public` (`IVORY_PUBLIC_RPC`), `IVORY_RPC_URL`, or local."""
+    if rpc_url:
+        return rpc_url.rstrip("/")
+    if chain == "public":
+        public = os.environ.get("IVORY_PUBLIC_RPC", "").strip()
+        if not public:
+            raise ValueError("IVORY_PUBLIC_RPC is unset (required for chain='public')")
+        return public.rstrip("/")
+    env = os.environ.get("IVORY_RPC_URL", "").strip()
+    if env:
+        return env.rstrip("/")
+    return "http://127.0.0.1:8545"
+
+
 class IvoryClient:
     """JSON-RPC client: balances, blocks, quant envelopes, receipts."""
 
     def __init__(
         self,
-        rpc_url: str,
-        secret_key: bytes,
+        rpc_url: str | None = None,
+        secret_key: bytes = b"",
         chain_id: int | None = None,
         timeout: float = 10.0,
+        chain: str | None = None,
     ) -> None:
-        self.rpc_url = rpc_url.rstrip("/")
+        if not secret_key:
+            raise ValueError("secret_key is required")
+        self.rpc_url = resolve_rpc_url(rpc_url, chain)
         self.secret_key = secret_key
         self._chain_id = chain_id
         self._http = httpx.Client(timeout=timeout)
