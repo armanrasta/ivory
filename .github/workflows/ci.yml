@@ -67,6 +67,7 @@ jobs:
           -p ivory-rpc
           -p ivory-vm
           -p ivory
+          -p ivory-dev
           --no-deps --tests -- -D warnings
 
   test:
@@ -99,6 +100,9 @@ jobs:
             extra: "-- --test-threads=1"
           - block: rpc
             packages: -p ivory-rpc
+            extra: ""
+          - block: tools
+            packages: -p ivory-dev
             extra: ""
           - block: node
             packages: -p ivory

@@ -21,7 +21,7 @@ members = [
     "bin/ivory",
     
     # Tools
-    "tools/ivory-cli",
+    "tools/ivory-dev",
     "tools/ivory-keygen",
     "tools/ivory-bench",
 ]

@@ -1,9 +1,0 @@
-# tools/ivory-cli/Cargo.toml
-[package]
-name = "ivory-cli"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-clap = { workspace = true }
-anyhow = { workspace = true }
